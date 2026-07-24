@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Loader2 } from "lucide-react";
+import { Check, Loader2, X } from "lucide-react";
 import { toast } from "sonner";
 import { OnboardingLayout } from "@/layouts/onboarding-layout";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { usePlans } from "@/hooks/use-plans";
 import { subscriptionsService } from "@/services/subscriptions-service";
 import { extractApiErrorMessage } from "@/lib/api-errors";
+import { getPlanFeatures } from "@/lib/plan-features";
 import { cn } from "@/lib/utils";
 import type { BillingType } from "@/types/billing";
 
@@ -69,45 +70,79 @@ export function ChoosePlanPage() {
         </div>
       ) : (
         <div className="grid gap-6 sm:grid-cols-2">
-          {plans?.map((plan) => (
-            <Card key={plan.id} className="flex flex-col">
-              <CardHeader>
-                <CardTitle className="font-display text-xl">{plan.name}</CardTitle>
-                <p className="mt-1">
-                  <span className="text-3xl font-semibold tracking-tight">{formatPrice(plan.price)}</span>
-                  <span className="text-sm text-muted-foreground">
-                    {billingType === "recurring" ? "/mês" : " (1 mês de acesso)"}
+          {plans?.map((plan) => {
+            const features = getPlanFeatures(plan.name);
+            const isPremium = plan.name.trim().toLowerCase() === "premium";
+            return (
+              <Card
+                key={plan.id}
+                className={cn(
+                  "relative flex flex-col",
+                  isPremium && "border-brand-500 ring-1 ring-brand-500",
+                )}
+              >
+                {isPremium && (
+                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-brand-500 px-3 py-1 text-xs font-semibold text-white shadow">
+                    Mais popular
                   </span>
-                </p>
-              </CardHeader>
-              <CardContent className="flex-1 space-y-2.5">
-                {[
-                  `${plan.maxSessions} sessões de WhatsApp`,
-                  `${plan.maxUsers} usuários no time`,
-                  `${plan.maxBots} bots automatizados`,
-                  `${plan.maxMessages.toLocaleString("pt-BR")} mensagens/mês`,
-                  `${plan.maxStorageMb} MB de armazenamento`,
-                  `${plan.maxAiRequests} requisições de IA/mês`,
-                ].map((feature) => (
-                  <div key={feature} className="flex items-center gap-2 text-sm">
-                    <Check className="h-4 w-4 shrink-0 text-brand-500" />
-                    {feature}
-                  </div>
-                ))}
-              </CardContent>
-              <CardFooter>
-                <Button
-                  variant="glow"
-                  className="w-full"
-                  disabled={loadingPlanId !== null}
-                  onClick={() => handleSubscribe(plan.id)}
-                >
-                  {loadingPlanId === plan.id && <Loader2 className="animate-spin" />}
-                  Assinar {plan.name}
-                </Button>
-              </CardFooter>
-            </Card>
-          ))}
+                )}
+                <CardHeader>
+                  <CardTitle className="font-display text-xl">{plan.name}</CardTitle>
+                  <p className="mt-1">
+                    <span className="text-3xl font-semibold tracking-tight">{formatPrice(plan.price)}</span>
+                    <span className="text-sm text-muted-foreground">
+                      {billingType === "recurring" ? "/mês" : " (1 mês de acesso)"}
+                    </span>
+                  </p>
+                </CardHeader>
+                <CardContent className="flex-1 space-y-2.5">
+                  {features
+                    ? features.map((feature) => (
+                      <div
+                        key={feature.label}
+                        className={cn(
+                          "flex items-center gap-2 text-sm",
+                          feature.included ? "text-foreground" : "text-muted-foreground",
+                        )}
+                      >
+                        {feature.included ? (
+                          <Check className="h-4 w-4 shrink-0 text-brand-500" />
+                        ) : (
+                          <X className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        )}
+                        <span className={feature.included ? "" : "line-through opacity-70"}>
+                          {feature.label}
+                        </span>
+                      </div>
+                    ))
+                    : [
+                        `${plan.maxSessions} sessões de WhatsApp`,
+                        `${plan.maxUsers} usuários no time`,
+                        `${plan.maxBots} bots automatizados`,
+                        `${plan.maxMessages.toLocaleString("pt-BR")} mensagens/mês`,
+                        `${plan.maxStorageMb} MB de armazenamento`,
+                        `${plan.maxAiRequests} requisições de IA/mês`,
+                      ].map((feature) => (
+                        <div key={feature} className="flex items-center gap-2 text-sm">
+                          <Check className="h-4 w-4 shrink-0 text-brand-500" />
+                          {feature}
+                        </div>
+                      ))}
+                </CardContent>
+                <CardFooter>
+                  <Button
+                    variant="glow"
+                    className="w-full"
+                    disabled={loadingPlanId !== null}
+                    onClick={() => handleSubscribe(plan.id)}
+                  >
+                    {loadingPlanId === plan.id && <Loader2 className="animate-spin" />}
+                    Assinar {plan.name}
+                  </Button>
+                </CardFooter>
+              </Card>
+            );
+          })}
         </div>
       )}
     </OnboardingLayout>

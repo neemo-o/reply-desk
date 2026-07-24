@@ -1,8 +1,8 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { ProtectedRoute } from "@/routes/protected-route";
 import { PublicOnlyRoute } from "@/routes/public-only-route";
+import { RootRedirect } from "@/routes/root-redirect";
 import { SubscriptionGate } from "@/routes/subscription-gate";
-import { LandingPage } from "@/pages/landing/landing-page";
 import { LoginPage } from "@/pages/auth/login-page";
 import { RegisterPage } from "@/pages/auth/register-page";
 import { VerifyEmailPage } from "@/pages/auth/verify-email-page";
@@ -15,7 +15,7 @@ import { NotFoundPage } from "@/pages/not-found-page";
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<LandingPage />} />
+      <Route path="/" element={<RootRedirect />} />
 
       <Route element={<PublicOnlyRoute />}>
         <Route path="/login" element={<LoginPage />} />

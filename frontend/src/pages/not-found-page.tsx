@@ -1,8 +1,12 @@
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/layout/logo";
+import { useAuth } from "@/contexts/auth-provider";
 
 export function NotFoundPage() {
+  const { isAuthenticated, user } = useAuth();
+  const homePath = isAuthenticated && user?.emailVerified ? "/dashboard" : "/";
+
   return (
     <div className="flex min-h-svh flex-col items-center justify-center gap-4 bg-background px-6 text-center">
       <Logo className="h-8" />
@@ -12,7 +16,7 @@ export function NotFoundPage() {
         O endereço que você tentou acessar não existe ou foi movido.
       </p>
       <Button asChild>
-        <Link to="/">Voltar para o início</Link>
+        <Link to={homePath}>Voltar para o início</Link>
       </Button>
     </div>
   );

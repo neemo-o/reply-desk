@@ -34,7 +34,6 @@ import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { to: "/dashboard", label: "Visão geral", icon: LayoutDashboard, end: true },
-  { to: "/dashboard/profile", label: "Perfil", icon: Settings, end: false },
 ] as const;
 
 function initials(name: string) {
@@ -85,8 +84,8 @@ function UserMenu({ onNavigate }: { onNavigate?: () => void }) {
             navigate("/dashboard/profile");
           }}
         >
-          <UserIcon className="h-4 w-4" />
-          Meu perfil
+          <Settings className="h-4 w-4" />
+          Configurações
         </DropdownMenuItem>
 
         {/* Submenu de tema — abre ao passar o mouse */}

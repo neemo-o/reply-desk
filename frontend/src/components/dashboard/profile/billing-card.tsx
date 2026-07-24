@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, Loader2 } from "lucide-react";
+import { Check, Loader2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +21,7 @@ import { usePlans } from "@/hooks/use-plans";
 import { subscriptionsService } from "@/services/subscriptions-service";
 import type { UpgradePreview } from "@/types/billing";
 import { extractApiErrorMessage } from "@/lib/api-errors";
+import { getPlanFeatures } from "@/lib/plan-features";
 import { cn } from "@/lib/utils";
 
 const STATUS_LABELS: Record<string, { label: string; variant: "success" | "warning" | "destructive" | "secondary" }> = {
@@ -273,12 +274,17 @@ export function BillingCard() {
                     : planPrice > currentPrice
                       ? "upgrade"
                       : "downgrade";
+                  const features = getPlanFeatures(plan.name);
                   return (
                     <div
                       key={plan.id}
                       className={cn(
-                        "flex flex-col rounded-lg border p-4",
-                        isCurrent ? "border-brand-500 ring-1 ring-brand-500" : "border-border",
+                        "relative flex flex-col rounded-lg border p-4",
+                        isCurrent
+                          ? "border-brand-500 ring-1 ring-brand-500"
+                          : plan.name.trim().toLowerCase() === "premium"
+                            ? "border-brand-500/60"
+                            : "border-border",
                       )}
                     >
                       <div className="mb-2 flex items-center justify-between">
@@ -289,11 +295,32 @@ export function BillingCard() {
                         {formatPrice(plan.price)}
                         <span className="text-sm font-normal text-muted-foreground">/mês</span>
                       </p>
-                      <div className="mb-4 flex-1 space-y-1.5 text-sm text-muted-foreground">
-                        <div className="flex items-center gap-2">
-                          <Check className="h-3.5 w-3.5 shrink-0 text-brand-500" />
-                          {plan.maxSessions} sessões · {plan.maxUsers} usuários · {plan.maxBots} bots
-                        </div>
+                      <div className="mb-4 flex-1 space-y-1.5 text-sm">
+                        {features
+                          ? features.map((feature) => (
+                            <div
+                              key={feature.label}
+                              className={cn(
+                                "flex items-center gap-2",
+                                feature.included ? "text-foreground" : "text-muted-foreground",
+                              )}
+                            >
+                              {feature.included ? (
+                                <Check className="h-3.5 w-3.5 shrink-0 text-brand-500" />
+                              ) : (
+                                <X className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                              )}
+                              <span className={feature.included ? "" : "line-through opacity-70"}>
+                                {feature.label}
+                              </span>
+                            </div>
+                          ))
+                          : (
+                            <div className="flex items-center gap-2 text-muted-foreground">
+                              <Check className="h-3.5 w-3.5 shrink-0 text-brand-500" />
+                              {plan.maxSessions} sessões · {plan.maxUsers} usuários · {plan.maxBots} bots
+                            </div>
+                          )}
                       </div>
                       <Button
                         variant={isCurrent ? "secondary" : "outline"}
