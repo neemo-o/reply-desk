@@ -1,6 +1,5 @@
 import { Bot, Building2, MessagesSquare } from "lucide-react";
 import { DashboardLayout } from "@/layouts/dashboard-layout";
-import { DashboardTabs } from "@/components/dashboard/dashboard-tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/contexts/auth-provider";
 
@@ -15,8 +14,6 @@ export function DashboardPage() {
 
   return (
     <DashboardLayout>
-      <DashboardTabs />
-
       <div className="mb-8">
         <h1 className="text-2xl font-semibold tracking-tight">Olá, {user?.name?.split(" ")[0]} 👋</h1>
         <p className="mt-1 text-sm text-muted-foreground">

@@ -1,0 +1,234 @@
+import { useState } from "react";
+import {
+  Check,
+  ChevronUp,
+  LogOut,
+  Monitor,
+  Moon,
+  Sun,
+  Palette,
+  User as UserIcon,
+  X,
+  Menu,
+  LayoutDashboard,
+  Settings,
+} from "lucide-react";
+import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
+import { Logo } from "@/components/layout/logo";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { useAuth } from "@/contexts/auth-provider";
+import { useTheme } from "@/contexts/theme-provider";
+import { useProfile } from "@/hooks/use-profile";
+import { cn } from "@/lib/utils";
+
+const NAV_ITEMS = [
+  { to: "/dashboard", label: "Visão geral", icon: LayoutDashboard, end: true },
+  { to: "/dashboard/profile", label: "Perfil", icon: Settings, end: false },
+] as const;
+
+function initials(name: string) {
+  return name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("");
+}
+
+function UserMenu({ onNavigate }: { onNavigate?: () => void }) {
+  const { user, logout } = useAuth();
+  const { data: profile } = useProfile();
+  const { theme, setTheme } = useTheme();
+  const navigate = useNavigate();
+
+  const themeOptions = [
+    { value: "light" as const, label: "Tema claro", icon: Sun },
+    { value: "dark" as const, label: "Tema escuro", icon: Moon },
+    { value: "system" as const, label: "Padrão do dispositivo", icon: Monitor },
+  ];
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          className="group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label="Abrir menu do usuário"
+        >
+          <Avatar className="h-9 w-9 shrink-0">
+            <AvatarImage src={profile?.avatar ?? undefined} alt={user?.name} />
+            <AvatarFallback>
+              {user ? initials(user.name) : <UserIcon className="h-4 w-4" />}
+            </AvatarFallback>
+          </Avatar>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium">{user?.name}</p>
+            <p className="truncate text-xs text-muted-foreground">{user?.email}</p>
+          </div>
+          <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=open]:rotate-180" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="top" sideOffset={8} className="w-[15.5rem]">
+        <DropdownMenuItem
+          onClick={() => {
+            onNavigate?.();
+            navigate("/dashboard/profile");
+          }}
+        >
+          <UserIcon className="h-4 w-4" />
+          Meu perfil
+        </DropdownMenuItem>
+
+        {/* Submenu de tema — abre ao passar o mouse */}
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <Palette className="h-4 w-4" />
+            Aparência
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="w-[13rem]">
+            {themeOptions.map((opt) => {
+              const Icon = opt.icon;
+              const isActive = theme === opt.value;
+              return (
+                <DropdownMenuItem
+                  key={opt.value}
+                  onClick={() => setTheme(opt.value)}
+                  className="gap-2.5"
+                >
+                  <Icon className="h-4 w-4" />
+                  {opt.label}
+                  {isActive && <Check className="ml-auto h-4 w-4 text-brand-500" />}
+                </DropdownMenuItem>
+              );
+            })}
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onClick={() => void logout()}
+          className="text-destructive focus:text-destructive"
+        >
+          <LogOut className="h-4 w-4" />
+          Sair
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+interface SidebarContentProps {
+  onNavigate?: () => void;
+}
+
+function SidebarContent({ onNavigate }: SidebarContentProps) {
+  return (
+    <div className="flex h-full flex-col">
+      {/* Logo */}
+      <div className="flex h-16 items-center px-6 shrink-0">
+        <Link to="/dashboard" onClick={onNavigate}>
+          <Logo className="h-7" />
+        </Link>
+      </div>
+
+      {/* Navigation */}
+      <nav className="flex-1 space-y-1 px-3 py-4">
+        {NAV_ITEMS.map((item) => {
+          const Icon = item.icon;
+          return (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              onClick={onNavigate}
+              className={({ isActive }) =>
+                cn(
+                  "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+                  isActive
+                    ? "bg-secondary text-foreground"
+                    : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+                )
+              }
+            >
+              <Icon className="h-4.5 w-4.5 shrink-0" />
+              {item.label}
+            </NavLink>
+          );
+        })}
+      </nav>
+
+      {/* Footer: user dropdown (opens upward) */}
+      <div className="shrink-0 border-t border-border p-3">
+        <UserMenu onNavigate={onNavigate} />
+      </div>
+    </div>
+  );
+}
+
+export function Sidebar() {
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const location = useLocation();
+
+  function handleNavigate() {
+    setMobileOpen(false);
+  }
+
+  return (
+    <>
+      {/* Mobile top bar */}
+      <div className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-background/80 px-4 backdrop-blur-md lg:hidden">
+        <Logo className="h-7" />
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Abrir menu"
+          onClick={() => setMobileOpen(true)}
+        >
+          <Menu className="h-5 w-5" />
+        </Button>
+      </div>
+
+      {/* Desktop sidebar (fixed) */}
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 border-r border-border bg-card lg:block">
+        <SidebarContent />
+      </aside>
+
+      {/* Mobile drawer overlay */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-ink-950/50 backdrop-blur-sm lg:hidden"
+          aria-hidden
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
+
+      {/* Mobile drawer */}
+      <aside
+        className={cn(
+          "fixed inset-y-0 left-0 z-50 w-64 border-r border-border bg-card transition-transform duration-300 ease-in-out lg:hidden",
+          mobileOpen ? "translate-x-0" : "-translate-x-full",
+        )}
+        key={location.pathname}
+      >
+        <button
+          className="absolute right-3 top-4 z-10 rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
+          aria-label="Fechar menu"
+          onClick={() => setMobileOpen(false)}
+        >
+          <X className="h-5 w-5" />
+        </button>
+        <SidebarContent onNavigate={handleNavigate} />
+      </aside>
+    </>
+  );
+}
