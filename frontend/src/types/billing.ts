@@ -76,6 +76,9 @@ export interface InvoiceItem {
   paidAt: number | null;
   invoiceUrl: string | null;
   invoicePdf: string | null;
+  /** 🔒 Link do recibo no Stripe — gerado apenas para pagamentos one-time
+   *  (charge.receipt_url). Para recorrentes, o link da fatura é `invoiceUrl`. */
+  receiptUrl: string | null;
 }
 
 /** 🔒 M18 — Resposta completa de GET /subscriptions/billing-details. */

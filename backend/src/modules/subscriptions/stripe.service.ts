@@ -492,6 +492,7 @@ export class StripeService {
       paidAt: number | null;
       invoiceUrl: string | null;
       invoicePdf: string | null;
+      receiptUrl: string | null;
     }>
   > {
     try {
@@ -512,6 +513,9 @@ export class StripeService {
         paidAt: inv.status === 'paid' ? inv.created : null,
         invoiceUrl: inv.hosted_invoice_url ?? null,
         invoicePdf: inv.invoice_pdf ?? null,
+        // Recurring não gera receipt_url — o Stripe usa hosted_invoice_url
+        // como link para a fatura. receiptUrl é exclusivo de one-time.
+        receiptUrl: null,
       }));
     } catch (err) {
       this.logger.error(`Stripe listInvoices falhou: ${(err as Error).message}`);
@@ -556,6 +560,7 @@ export class StripeService {
       paidAt: number | null;
       invoiceUrl: string | null;
       invoicePdf: string | null;
+      receiptUrl: string | null;
     }>;
   }> {
     try {
@@ -569,6 +574,11 @@ export class StripeService {
         expYear: number;
       } | null = null;
 
+      // 🔒 receipt_url gerado pelo Stripe para pagamentos one-time — link
+      // público do recibo (recebe.com/...) que o usuário pode abrir sem login.
+      // Para pagamentos recorrentes, o equivalente é hosted_invoice_url.
+      let receiptUrl: string | null = null;
+
       const chargeId = pi.latest_charge as string | null;
       if (chargeId) {
         const charge = await this.client.charges.retrieve(chargeId);
@@ -581,6 +591,7 @@ export class StripeService {
             expYear: card.exp_year ?? 0,
           };
         }
+        receiptUrl = charge.receipt_url ?? null;
       }
 
       // Monta um item de histórico sintético para a UI — não há Invoice
@@ -599,6 +610,7 @@ export class StripeService {
             paidAt,
             invoiceUrl: null,
             invoicePdf: null,
+            receiptUrl,
           }]
         : [];
 

@@ -503,6 +503,7 @@ export class SubscriptionsService {
           paidAt: inv.paidAt,
           invoiceUrl: inv.invoiceUrl,
           invoicePdf: inv.invoicePdf,
+          receiptUrl: inv.receiptUrl,
         })),
         subscription: {
           status: subscription.status,
@@ -559,6 +560,7 @@ export class SubscriptionsService {
         paidAt: inv.paidAt,
         invoiceUrl: inv.invoiceUrl,
         invoicePdf: inv.invoicePdf,
+        receiptUrl: inv.receiptUrl,
       })),
       subscription: {
         status: subscription.status,

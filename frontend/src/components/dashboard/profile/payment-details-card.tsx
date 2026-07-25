@@ -1,4 +1,5 @@
-import { CreditCard, Loader2, FileText, ExternalLink, Receipt } from "lucide-react";
+import { useState } from "react";
+import { CreditCard, Loader2, FileText, ExternalLink, Receipt, ChevronLeft, ChevronRight } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -223,56 +224,140 @@ export function PaymentDetailsCard() {
           </div>
         )}
 
-        {/* ── Histórico de faturas ── */}
+        {/* ── Histórico de faturas (tabela paginada) ── */}
         {hasInvoices && (
-          <div>
-            <p className="mb-2 flex items-center gap-2 text-sm font-medium">
-              <FileText className="h-4 w-4" />
-              Histórico de faturas
-            </p>
-            <div className="divide-y divide-border rounded-lg border border-border">
-              {details.invoices.map((inv) => (
-                <InvoiceRow key={inv.id} invoice={inv} />
-              ))}
-            </div>
-          </div>
+          <InvoicesTable invoices={details.invoices} />
         )}
       </CardContent>
     </Card>
   );
 }
 
+/** 🔒 Tabela responsiva de faturas com paginação de 4 itens por página. */
+const PAGE_SIZE = 4;
+
+function InvoicesTable({ invoices }: { invoices: InvoiceItem[] }) {
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(invoices.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const start = (currentPage - 1) * PAGE_SIZE;
+  const pageItems = invoices.slice(start, start + PAGE_SIZE);
+
+  return (
+    <div>
+      <p className="mb-2 flex items-center gap-2 text-sm font-medium">
+        <FileText className="h-4 w-4" />
+        Histórico de faturas
+      </p>
+
+      {/* 📱 Desktop: tabela real; 📱 Mobile: vira "cards" empilhados via
+          data-label + CSS (ocultamos o thead no mobile e mostramos o label
+          em cada célula). */}
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <table className="rd-invoices w-full text-sm">
+          <thead className="hidden sm:table-header-group">
+            <tr className="border-b border-border bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+              <th className="px-4 py-2 font-medium">Fatura</th>
+              <th className="px-4 py-2 font-medium">Data</th>
+              <th className="px-4 py-2 text-right font-medium">Valor</th>
+              <th className="px-4 py-2 font-medium">Status</th>
+              <th className="px-4 py-2 text-right font-medium">Recibo</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {pageItems.map((inv) => (
+              <InvoiceRow key={inv.id} invoice={inv} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* 📄 Paginação */}
+      {totalPages > 1 && (
+        <div className="mt-3 flex items-center justify-between gap-2 text-sm">
+          <span className="text-muted-foreground">
+            Página {currentPage} de {totalPages} · {invoices.length}{" "}
+            {invoices.length === 1 ? "fatura" : "faturas"}
+          </span>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={currentPage <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              aria-label="Página anterior"
+            >
+              <ChevronLeft className="h-4 w-4" />
+              Anterior
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={currentPage >= totalPages}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              aria-label="Próxima página"
+            >
+              Próxima
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function InvoiceRow({ invoice }: { invoice: InvoiceItem }) {
   const statusInfo = INVOICE_STATUS[invoice.status] ?? INVOICE_STATUS.unknown;
 
+  // 🔒 Link externo: prioriza invoiceUrl (recorrente — hosted_invoice_url),
+  // depois receiptUrl (one-time — charge.receipt_url), depois invoicePdf.
+  const externalLink = invoice.invoiceUrl ?? invoice.receiptUrl ?? invoice.invoicePdf;
+  const linkLabel = invoice.invoiceUrl
+    ? "Ver fatura no Stripe"
+    : invoice.receiptUrl
+      ? "Ver recibo"
+      : invoice.invoicePdf
+        ? "Baixar PDF"
+        : "Ver no Stripe";
+
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
-      <div className="min-w-0 flex-1">
+    <tr className="hover:bg-muted/30">
+      <td data-label="Fatura" className="px-4 py-3 align-top">
         <p className="truncate text-sm font-medium">
-          {invoice.number ?? "Fatura"}
+          {invoice.number ?? "Pagamento"}
         </p>
-        <p className="text-xs text-muted-foreground">
-          {formatTimestamp(invoice.createdAt)}
-          {invoice.paidAt && ` · paga em ${formatTimestamp(invoice.paidAt)}`}
-        </p>
-      </div>
-      <div className="flex items-center gap-2">
-        <span className="text-sm font-medium">
-          {formatCurrency(invoice.amountPaid || invoice.amountDue)}
-        </span>
+      </td>
+      <td data-label="Data" className="px-4 py-3 align-top text-sm text-muted-foreground">
+        {formatTimestamp(invoice.createdAt)}
+        {invoice.paidAt && (
+          <span className="block text-xs">
+            pago em {formatTimestamp(invoice.paidAt)}
+          </span>
+        )}
+      </td>
+      <td data-label="Valor" data-align="right" className="px-4 py-3 align-top text-right text-sm font-medium">
+        {formatCurrency(invoice.amountPaid || invoice.amountDue)}
+      </td>
+      <td data-label="Status" className="px-4 py-3 align-top">
         <Badge variant={statusInfo.variant}>{statusInfo.label}</Badge>
-        {invoice.invoiceUrl && (
+      </td>
+      <td data-label="Recibo" data-align="right" className="px-4 py-3 align-top text-right">
+        {externalLink ? (
           <a
-            href={invoice.invoiceUrl}
+            href={externalLink}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-secondary"
-            aria-label="Ver fatura no Stripe"
+            className="inline-flex items-center gap-1 text-sm font-medium text-brand-600 hover:text-brand-700 dark:text-brand-400"
+            aria-label={linkLabel}
           >
-            <ExternalLink className="h-4 w-4 text-muted-foreground" />
+            <ExternalLink className="h-4 w-4" />
+            <span className="sm:hidden">{linkLabel}</span>
           </a>
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
         )}
-      </div>
-    </div>
+      </td>
+    </tr>
   );
 }

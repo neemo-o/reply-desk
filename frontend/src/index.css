@@ -124,6 +124,59 @@
   }
 }
 
+@layer components {
+  /* 📱 Tabela responsiva — vira "cards" empilhados no mobile (<640px).
+     Cada <td data-label="..."> mostra o label antes do conteúdo.
+     No desktop (>=640px) o <thead> reaparece e o data-label é ocultado. */
+  @media (max-width: 639px) {
+    table.rd-invoices {
+      display: block;
+      width: 100%;
+    }
+    table.rd-invoices thead {
+      display: none;
+    }
+    table.rd-invoices tbody,
+    table.rd-invoices tr,
+    table.rd-invoices td {
+      display: block;
+      width: 100%;
+    }
+    table.rd-invoices tr {
+      border-bottom: 1px solid hsl(var(--border));
+      padding: 0.75rem 1rem;
+    }
+    table.rd-invoices tbody {
+      border: none;
+    }
+    table.rd-invoices tbody tr:last-child {
+      border-bottom: none;
+    }
+    table.rd-invoices td {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.25rem 0;
+      border: none;
+      text-align: right;
+    }
+    table.rd-invoices td::before {
+      content: attr(data-label);
+      font-weight: 500;
+      font-size: 0.75rem;
+      color: hsl(var(--muted-foreground));
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      text-align: left;
+      margin-right: 1rem;
+    }
+    /* Alinhamento à direita para colunas de valor/number no mobile */
+    table.rd-invoices td[data-align="right"] {
+      justify-content: flex-end;
+    }
+  }
+}
+
 @theme inline {
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
