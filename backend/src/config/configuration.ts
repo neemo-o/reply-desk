@@ -13,6 +13,10 @@ export default () => ({
     accessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN ?? '15m',
     refreshSecret: process.env.JWT_REFRESH_SECRET,
     refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN ?? '7d',
+    // 🔒 S4 — Grace period em ms para refresh token rotation.
+    // Default 30s: janela onde um refresh token recém-rotacionado ainda é
+    // aceito, permitindo múltiplas abas/dispositivos fazerem refresh concorrente.
+    refreshGraceMs: parseInt(process.env.JWT_REFRESH_GRACE_MS ?? '30000', 10),
   },
   s3: {
     endpoint: process.env.S3_ENDPOINT,

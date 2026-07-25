@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   Check,
   ChevronUp,
+  Clock,
   LogOut,
   Monitor,
   Moon,
@@ -30,6 +31,7 @@ import {
 import { useAuth } from "@/contexts/auth-provider";
 import { useTheme } from "@/contexts/theme-provider";
 import { useProfile } from "@/hooks/use-profile";
+import { useSessionExpiry } from "@/hooks/use-session-expiry";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
@@ -50,6 +52,7 @@ function UserMenu({ onNavigate }: { onNavigate?: () => void }) {
   const { data: profile } = useProfile();
   const { theme, setTheme } = useTheme();
   const navigate = useNavigate();
+  const session = useSessionExpiry();
 
   const themeOptions = [
     { value: "light" as const, label: "Tema claro", icon: Sun },
@@ -78,6 +81,21 @@ function UserMenu({ onNavigate }: { onNavigate?: () => void }) {
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent side="top" sideOffset={8} className="w-[15.5rem]">
+        {/* 🔒 S4 — Sessão atual: countdown do access token + previsão de refresh. */}
+        {session.hasSession && (
+          <div className="px-2 py-1.5 text-xs text-muted-foreground" aria-label="Tempo restante da sessão">
+            <div className="flex items-center gap-1.5">
+              <Clock className="h-3.5 w-3.5 shrink-0" />
+              <span className="tabular-nums">
+                {session.isAccessExpired ? "Token expirado" : `Token em ${session.accessFormatted}`}
+              </span>
+            </div>
+            <p className="ml-5 mt-0.5 text-[11px] opacity-80">
+              Sessão expira em {session.refreshFormatted}
+            </p>
+          </div>
+        )}
+
         <DropdownMenuItem
           onClick={() => {
             onNavigate?.();

@@ -24,19 +24,73 @@ interface RetriableConfig extends InternalAxiosRequestConfig {
 
 let refreshPromise: Promise<string | null> | null = null;
 
+// 🔒 S4 — Sincronização de sessão entre abas via BroadcastChannel.
+// Quando uma aba faz refresh com sucesso, ela transmite os novos tokens e
+// as outras abas atualizam seus tokens em memória — sem precisar chamar
+// /auth/refresh de novo (o que revogaria o token recém-gerado).
+//
+// Sem isso, cada aba faria seu próprio refresh com o token antigo (agora
+// rotacionado), receberia 401 e cairia em clearSession() → logout
+// fantasma em multi-aba. Aqui usamos o BroadcastChannel em vez do evento
+// `storage` porque o zustand persist usa localStorage E porque queremos
+// que o evento seja capturado até pela própria aba que disparou (storage
+// event não dispara na aba originária).
+const SESSION_CHANNEL: BroadcastChannel | null =
+  typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("replydesk-session") : null;
+
+if (SESSION_CHANNEL) {
+  SESSION_CHANNEL.onmessage = (event) => {
+    if (!event.data) return;
+    const { type, accessToken, refreshToken, accessTokenExp } = event.data as {
+      type: "refreshed" | "logout";
+      accessToken?: string;
+      refreshToken?: string;
+      accessTokenExp?: number;
+    };
+    const store = useAuthStore.getState();
+    if (type === "refreshed" && accessToken && refreshToken) {
+      store.setSession({ accessToken, refreshToken, accessTokenExp });
+    } else if (type === "logout") {
+      store.clearSession();
+    }
+  };
+}
+
+function broadcastSessionUpdate(payload: {
+  type: "refreshed" | "logout";
+  accessToken?: string;
+  refreshToken?: string;
+  accessTokenExp?: number;
+}) {
+  SESSION_CHANNEL?.postMessage(payload);
+}
+
 async function refreshAccessToken(): Promise<string | null> {
   const { refreshToken, setSession, clearSession } = useAuthStore.getState();
   if (!refreshToken) return null;
 
   try {
-    const { data } = await axios.post<{ accessToken: string; refreshToken: string }>(
-      `${API_URL}/auth/refresh`,
-      { refreshToken },
-    );
-    setSession({ accessToken: data.accessToken, refreshToken: data.refreshToken });
+    const { data } = await axios.post<{
+      accessToken: string;
+      refreshToken: string;
+      accessTokenExp?: number;
+    }>(`${API_URL}/auth/refresh`, { refreshToken });
+    setSession({
+      accessToken: data.accessToken,
+      refreshToken: data.refreshToken,
+      accessTokenExp: data.accessTokenExp,
+    });
+    // Avisa outras abas que atualizamos os tokens.
+    broadcastSessionUpdate({
+      type: "refreshed",
+      accessToken: data.accessToken,
+      refreshToken: data.refreshToken,
+      accessTokenExp: data.accessTokenExp,
+    });
     return data.accessToken;
   } catch {
     clearSession();
+    broadcastSessionUpdate({ type: "logout" });
     return null;
   }
 }

@@ -22,7 +22,7 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const { accessToken, refreshToken, setSession, setUser, setTenantId, clearSession } = useAuthStore();
+  const { accessToken, refreshToken, setSession, setUser, setTenantId, setSessionExpiry, clearSession } = useAuthStore();
   const [user, setLocalUser] = useState<User | null>(null);
   const [tenant, setTenant] = useState<MeTenant | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
@@ -41,6 +41,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(nextUser);
     setTenant(activeTenant);
     setTenantId(activeTenant?.id ?? null);
+    // 🔒 S4 — Atualiza a previsão de expiração da sessão (refresh token) no
+    // store persistido, para o hook useSessionExpiry exibir "expira em X".
+    setSessionExpiry(snapshot.session?.refreshExpiresAt ?? null);
   }
 
   useEffect(() => {

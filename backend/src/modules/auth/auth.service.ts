@@ -127,7 +127,12 @@ export class AuthService {
       throw new UnauthorizedException('Refresh token inválido');
     }
 
-    await this.tokensService.revokeRefreshToken(result.tokenRecordId);
+    // 🔒 S4 — NÃO revoga imediatamente: marca como "replaced". O token antigo
+    // continua válido por `jwt.refreshGraceMs` (default 30s) para permitir
+    // refresh concorrente de múltiplas abas/dispositivos com o mesmo token.
+    // Idempotente: se já marcado, refresh na janela de grace apenas atualiza
+    // replacedAt (próxima rotação ainda gera novo token válido).
+    await this.tokensService.markReplaced(result.tokenRecordId);
 
     const user = await this.prisma.user.findUnique({ where: { id: result.payload.sub } });
     if (!user || user.deletedAt) {
@@ -146,9 +151,18 @@ export class AuthService {
   }
 
   /**
-   * 🔒 M5 — Snapshot do estado do usuário para o frontend decidir qual
+   * 🔒 S4 — Snapshot do estado do usuário para o frontend decidir qual
    * tela renderizar (verify-email, create-tenant, choose-plan, dashboard
    * bloqueado, dashboard ativo).
+   *
+   * Inclui `session` com a expiração do access token (em segundos desde
+   * epoch) e do refresh token (ISO + segundos). O frontend usa isso para
+   * mostrar "sessão expira em X" e disparar o refresh antes do 401.
+   *
+   * Como o /auth/me é autenticado, temos o userId. O access token vigente
+   * não fica disponível aqui (só no header Authorization), mas o frontend
+   * pode decodificá-lo — aqui devolvemos só o refresh token expira (vindo
+   * do DB), que é a previsão real de "quanto tempo até(logar de novo)".
    */
   async getMeSnapshot(userId: string) {
     const user = await this.prisma.user.findUnique({
@@ -204,6 +218,29 @@ export class AuthService {
       };
     });
 
+    // 🔒 S4 — Busca o refresh token ativo (não revogado, não substituído ou
+    // dentro do grace period, não expirado) mais recente do usuário. Esse
+    // `expiresAt` é a previsão real de "quanto tempo até o usuário precisar
+    // logar de novo" (considerando que o client faça refresh automático).
+    const activeRefresh = await this.prisma.refreshToken.findFirst({
+      where: {
+        userId,
+        revoked: false,
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const session = activeRefresh
+      ? {
+          refreshExpiresAt: activeRefresh.expiresAt.toISOString(),
+          refreshExpiresInSec: Math.max(
+            0,
+            Math.floor((activeRefresh.expiresAt.getTime() - Date.now()) / 1000),
+          ),
+        }
+      : null;
+
     return {
       user: {
         id: user.id,
@@ -212,14 +249,19 @@ export class AuthService {
         emailVerified: user.emailVerified,
       },
       tenants,
+      session,
     };
   }
 
+  /**
+   * 🔒 S4 — Emite os tokens e devolve também `accessTokenExp` (segundos desde
+   * epoch) para o frontend inicializar o countdown sem precisar decodificar o JWT.
+   */
   private async issueTokens(userId: string, email: string) {
-    const [accessToken, refreshToken] = await Promise.all([
-      this.tokensService.generateAccessToken(userId, email),
+    const [{ token: accessToken, exp: accessTokenExp }, refreshToken] = await Promise.all([
+      this.tokensService.generateAccessTokenWithExp(userId, email),
       this.tokensService.generateRefreshToken(userId),
     ]);
-    return { accessToken, refreshToken };
+    return { accessToken, refreshToken, accessTokenExp };
   }
 }

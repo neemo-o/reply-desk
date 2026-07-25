@@ -44,6 +44,13 @@ class EnvironmentVariables {
   @IsString()
   JWT_REFRESH_EXPIRES_IN?: string;
 
+  // 🔒 S4 — Grace period p/ refresh token rotation (ms).
+  // Janela em que um refresh token recém-rotacionado ainda é aceito, permitindo
+  // múltiplas abas/dispositivos fazerem refresh concorrente sem queda de sessão.
+  @IsOptional()
+  @IsString()
+  JWT_REFRESH_GRACE_MS?: string;
+
   // 🔒 S1 — Lista de origens permitidas para CORS (separadas por vírgula)
   @IsOptional()
   @IsString()

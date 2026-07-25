@@ -33,11 +33,19 @@ export interface MeSnapshot {
     emailVerified: boolean;
   };
   tenants: MeTenant[];
+  /** 🔒 S4 — Sessão atual (previsão de expiração do refresh token do DB). */
+  session?: {
+    refreshExpiresAt: string;
+    refreshExpiresInSec: number;
+  } | null;
 }
 
 export interface AuthTokens {
   accessToken: string;
   refreshToken: string;
+  /** 🔒 S4 — expiração do access token (segundos desde epoch). Opcional para
+   * não quebrar clientes legados que não esperam esse campo. */
+  accessTokenExp?: number;
 }
 
 export interface LoginPayload {

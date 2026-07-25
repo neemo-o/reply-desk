@@ -29,18 +29,26 @@ model User {
 }
 
 model RefreshToken {
-  id        String   @id @default(uuid())
-  userId    String   @map("user_id")
-  tokenHash String   @map("token_hash")
-  revoked   Boolean  @default(false)
-  expiresAt DateTime @map("expires_at")
-  createdAt DateTime @default(now()) @map("created_at")
+  id         String    @id @default(uuid())
+  userId     String    @map("user_id")
+  tokenHash  String    @map("token_hash")
+  revoked    Boolean   @default(false)
+  // 🔒 S4 — Grace period p/ refresh token rotation.
+  // Quando um token é rotacionado, NÃO é revogado imediatamente. Marcamos
+  // `replacedAt` e o token continua válido por `JWT_REFRESH_GRACE_MS` (default 30s).
+  // Isso permite que múltiplas abas/dispositivos que compartilham o mesmo refresh
+  // token façam refresh concorrentemente sem que uma revoke o token da outra.
+  // Após o grace, o cleanup job remove; tentativa de uso após grace → 401.
+  replacedAt DateTime? @map("replaced_at")
+  expiresAt   DateTime  @map("expires_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([expiresAt]) // DB-7: cron cleanup ORDER BY expires_at
   @@index([userId, revoked, expiresAt]) // DB-7: query ativa do user
+  @@index([replacedAt]) // S4: index p/ checar grace period
   @@map("refresh_tokens")
 }
 

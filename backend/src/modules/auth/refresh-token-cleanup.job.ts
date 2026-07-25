@@ -25,11 +25,19 @@ export class RefreshTokenCleanupJob implements OnModuleInit {
   async run() {
     try {
       const cutoff = new Date();
+      // 🔒 S4 — Tokens rotacionados (replacedAt != null) só são removidos
+      // DEPOIS do grace period expirar. Como este job roda a cada 6h e o
+      // grace padrão é 30s, na prática replacedAt < cutoff - 30s sempre é
+      // verdade aqui. A checagem explícita evita deletar um token que foi
+      // rotacionado há poucos milissegundos (edge case: job roda no exato
+      // momento do refresh de uma outra aba).
+      const graceCutoff = new Date(cutoff.getTime() - 30_000); // 30s de folga
       const result = await this.prisma.refreshToken.deleteMany({
         where: {
           OR: [
             { revoked: true },
             { expiresAt: { lt: cutoff } },
+            { replacedAt: { lt: graceCutoff } },
           ],
         },
       });
