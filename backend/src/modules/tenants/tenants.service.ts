@@ -254,8 +254,12 @@ export class TenantsService {
   }
 
   async listMembers(tenantId: string) {
+    // 🔒 Filtra só membros ativos — membros removidos (status='removed')
+    // não devem aparecer na listagem nem contar para o limite do plano.
+    // assertCanInviteUser também filtra por status='active', mantendo
+    // consistência entre a contagem da UI e a validação do backend.
     return this.prisma.tenantUser.findMany({
-      where: { tenantId },
+      where: { tenantId, status: 'active' },
       include: { user: { select: { id: true, name: true, email: true } }, role: { select: { name: true } } },
     });
   }

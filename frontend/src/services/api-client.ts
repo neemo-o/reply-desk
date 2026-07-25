@@ -97,6 +97,32 @@ async function refreshAccessToken(): Promise<string | null> {
 
 // 🔁 Em caso de 401, tenta renovar a sessão via refresh token uma única vez
 // (evitando corridas concorrentes) antes de repetir a requisição original.
+//
+// 🔒 S4 — A exclusão de refresh precisa cobrir SÓ endpoints que NÃO devem
+// disparar refresh: /auth/refresh (o próprio refresh), /auth/login,
+// /auth/register, /auth/logout. Esses endpoints tratam 401 explicitamente
+// ou são públicos — retentar via refresh aqui causaria loop ou logout fantasma.
+//
+// /auth/me NÃO entra na lista: é rota autenticada comum. Quando o access
+// token expira e o bootstrap (auth-provider.tsx) chama /auth/me, o 401
+// deve disparar refresh — caso contrário o usuário cai no login no reload
+// mesmo com refresh token válido (bug: a versão anterior excluía qualquer
+// URL contendo "/auth/", o que pedia /auth/me no caminho).
+const NO_REFRESH_URLS = ['/auth/refresh', '/auth/login', '/auth/register', '/auth/logout'];
+function shouldSkipRefresh(url: string | undefined): boolean {
+  if (!url) return true;
+  // Compara só o caminho (ignora queryString e eventual host absoluto).
+  // O axios põe em `originalRequest.url` o valor passado na chamada — pode
+  // ser "/auth/me" (relativo ao baseURL) ou "http://.../auth/me" (absoluto).
+  let pathname: string;
+  try {
+    pathname = new URL(url, 'http://_').pathname;
+  } catch {
+    pathname = url.split('?')[0];
+  }
+  return NO_REFRESH_URLS.some((p) => pathname === p || pathname.endsWith(p));
+}
+
 apiClient.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
@@ -106,7 +132,7 @@ apiClient.interceptors.response.use(
       error.response?.status === 401 &&
       originalRequest &&
       !originalRequest._retry &&
-      !originalRequest.url?.includes("/auth/")
+      !shouldSkipRefresh(originalRequest.url)
     ) {
       originalRequest._retry = true;
 

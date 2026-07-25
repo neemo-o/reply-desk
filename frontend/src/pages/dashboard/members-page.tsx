@@ -32,6 +32,7 @@ import {
   useTransferOwnership,
   useTenantSummary,
 } from "@/hooks/use-tenant";
+import { useSubscription } from "@/hooks/use-subscription";
 import type { TenantRole } from "@/types/auth";
 
 const ROLE_LABELS: Record<string, string> = {
@@ -56,11 +57,19 @@ type InviteFormValues = z.infer<typeof inviteSchema>;
 export function MembersPage() {
   const { role: actingRole, user } = useAuth();
   const { data: members, isLoading } = useTenantMembers();
+  const { data: subscription } = useSubscription();
   const removeMember = useRemoveMember();
 
   const isOwner = actingRole === "owner";
   const isAdmin = actingRole === "admin";
   const canManage = isOwner || isAdmin;
+
+  // 🔒 Limite de usuários do plano ativo — usado para mostrar a contagem
+  // "X de Y membros ativos" e avisar quando atinge o limite (bloqueia convites).
+  // O backend já valida em assertCanInviteUser; aqui só refletimos na UI.
+  const maxUsers = subscription?.plan?.maxUsers ?? null;
+  const activeCount = members?.length ?? 0;
+  const atLimit = maxUsers !== null && activeCount >= maxUsers;
 
   // Agent não tem acesso à gestão de membros.
   if (!canManage) {
@@ -89,17 +98,73 @@ export function MembersPage() {
             Gerencie quem tem acesso à sua organização e qual o papel de cada um.
           </p>
         </div>
-        {canManage && <InviteMemberDialog />}
+        {canManage && (
+          <InviteMemberDialog
+            atLimit={atLimit}
+            maxUsers={maxUsers}
+            activeCount={activeCount}
+          />
+        )}
       </div>
 
       <div className="space-y-6">
         <PendingInvitations />
 
+        {/* 🔒 Aviso de limite atingido — bloqueia novos convites. Oferece
+            link para upgrade do plano (só owner/admin vê este card). */}
+        {atLimit && canManage && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm">
+            <div>
+              <p className="font-medium text-amber-600 dark:text-amber-400">
+                Limite de usuários atingido
+              </p>
+              <p className="mt-1 text-muted-foreground">
+                Seu plano {subscription?.plan?.name} permite {maxUsers}{" "}
+                {maxUsers === 1 ? "usuário" : "usuários"}.{" "}
+                {isOwner
+                  ? "Faça upgrade para adicionar mais membros."
+                  : "Peça ao dono para fazer upgrade do plano."}
+              </p>
+            </div>
+            {isOwner && (
+              <a href="/choose-plan">
+                <Button variant="outline" size="sm" className="border-amber-400 text-amber-600 hover:bg-amber-50">
+                  Fazer upgrade
+                </Button>
+              </a>
+            )}
+          </div>
+        )}
+
         <Card>
         <CardHeader>
           <CardTitle>Pessoas na organização</CardTitle>
           <CardDescription>
-            {members?.length ?? 0} membro(s) ativo(s)
+            <span className="flex flex-wrap items-center gap-2">
+              <span>
+                {activeCount} {activeCount === 1 ? "membro ativo" : "membros ativos"}
+              </span>
+              {maxUsers !== null && (
+                <>
+                  <span className="text-muted-foreground/60">·</span>
+                  <span
+                    className={
+                      atLimit
+                        ? "font-medium text-amber-600 dark:text-amber-400"
+                        : "text-muted-foreground"
+                    }
+                  >
+                    de {maxUsers} {maxUsers === 1 ? "usuário" : "usuários"} no plano {subscription?.plan?.name}
+                  </span>
+                  <Badge
+                    variant={atLimit ? "warning" : "secondary"}
+                    className="ml-1"
+                  >
+                    {atLimit ? "Limite atingido" : `${activeCount}/${maxUsers}`}
+                  </Badge>
+                </>
+              )}
+            </span>
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -236,7 +301,15 @@ function PendingInvitations() {
   );
 }
 
-function InviteMemberDialog() {
+function InviteMemberDialog({
+  atLimit = false,
+  maxUsers = null,
+  activeCount = 0,
+}: {
+  atLimit?: boolean;
+  maxUsers?: number | null;
+  activeCount?: number;
+}) {
   const inviteMember = useInviteMember();
   const [open, setOpen] = useState(false);
 
@@ -263,7 +336,14 @@ function InviteMemberDialog() {
   return (
     <AlertDialog open={open} onOpenChange={setOpen}>
       <AlertDialogTrigger asChild>
-        <Button>
+        <Button
+          disabled={atLimit}
+          title={
+            atLimit && maxUsers !== null
+              ? `Limite do plano atingido (${activeCount}/${maxUsers}). Faça upgrade para convidar mais membros.`
+              : undefined
+          }
+        >
           <UserPlus className="h-4 w-4" />
           Convidar membro
         </Button>
