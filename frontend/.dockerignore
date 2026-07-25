@@ -1,4 +1,4 @@
-# .dockerignore — backend (context: ./backend)
+# .dockerignore — frontend (context: ./frontend)
 # Referência completa na raiz: .dockerignore
 
 # Secrets
@@ -11,7 +11,7 @@ node_modules/
 
 # Build output local (gerado no build do Docker)
 dist/
-dist-worker/
+dist-ssr/
 *.tsbuildinfo
 
 # Git / IDE
@@ -21,22 +21,20 @@ dist-worker/
 
 # Logs
 *.log
-logs/
+npm-debug.log*
 
 # OS
 .DS_Store
 Thumbs.db
 
+# Editor / IDE
+.vscode/
+.idea/
+.cursor/
+
 # Testes / cobrança
 coverage/
-test/
-e2e/
-*.spec.ts
 
 # Docs
 *.md
 README.md
-
-# Docker recursivo
-docker-compose*.yml
-Dockerfile*

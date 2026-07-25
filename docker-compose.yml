@@ -1,14 +1,31 @@
-# 🚀 docker-compose.yml — Stack completa do backend (um único comando)
+# ═════════════════════════════════════════════════════════════════════
+# 🚀 docker-compose.yml — Stack COMPLETA do ReplyDesk (raiz)
 #
-# Uso:
-#   docker compose up -d            ← sobe tudo (API + Worker + Postgres + Redis + MinIO)
-#   docker compose down             ← derruba tudo
-#   docker compose logs -f api     ← acompanha logs da API
-#   docker compose exec api npx prisma migrate deploy  ← roda migrations
+# Um único comando sobe TUDO:
+#   docker compose up -d --build
 #
-# Para PRODUÇÃO, use o override:
-#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-#   (override aplica tuning de produção: buffers maiores, restart Policies, etc.)
+# O que acontece (automático, em ordem):
+#   1. Sobe Postgres + Redis + MinIO (com healthchecks)
+#   2. Faz build do backend (Dockerfile multi-stage: deps + prisma generate + nest build)
+#   3. Faz build do frontend (Dockerfile multi-stage: Vite build → Nginx serve SPA)
+#   4. O entrypoint do backend aplica `prisma migrate deploy` e `prisma generate`
+#   5. Sobe a API (porta 3000) e o Worker (BullMQ consumer)
+#   6. Sobe o Frontend no Nginx (porta 80/8080) com proxy reverso /api → backend
+#
+# Cada serviço lê seu próprio .env individual:
+#   backend/.env  → injetado no api e worker via env_file
+#   frontend/.env → usado no build do frontend (VITE_ vars via --build-arg via .env)
+#
+# Logs:
+#   docker compose logs -f api worker frontend
+#   docker compose logs -f
+#
+# Status:
+#   docker compose ps
+#
+# Derrubar:
+#   docker compose down
+# ═════════════════════════════════════════════════════════════════════
 
 services:
   # ─── INFRA ───────────────────────────────────────────────
@@ -77,20 +94,23 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # ─── APP ─────────────────────────────────────────────────
+  # ─── BACKEND (API + Worker) ────────────────────────────
 
   api:
     build:
-      context: .
+      context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      - ./backend/.env
     environment:
       # 🔒 Garante NODE_ENV=development no compose de dev — o Dockerfile fixa
       # ENV NODE_ENV=production, e sem este override o container roda em produção
       # (fail-closed de env.validation pode rejeitar config de dev e causar 401).
       NODE_ENV: development
+      # Sobrescreve DATABASE_URL para usar o hostname `postgres` interno do Docker
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-whatsapp_saas}?schema=public
+      # Redis e MinIO usam hostnames internos do Docker
       REDIS_HOST: redis
       REDIS_PORT: 6379
       S3_ENDPOINT: http://minio:9000
@@ -108,7 +128,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 15s
+      start_period: 30s
     logging:
       driver: json-file
       options:
@@ -117,11 +137,12 @@ services:
 
   worker:
     build:
-      context: .
+      context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
     command: ["node", "dist/src/worker.js"]
-    env_file: .env
+    env_file:
+      - ./backend/.env
     environment:
       NODE_ENV: development
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-whatsapp_saas}?schema=public
@@ -132,6 +153,30 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ─── FRONTEND (Vite SPA → Nginx) ────────────────────────
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # VITE_API_URL é injetado no build do Vite.
+        # Em prod via Docker, o Nginx faz proxy /api → api:3000,
+        # então o frontend pode chamar /api/v1 (URL relativa) e funciona em ambos.
+        # Em dev local (npm run dev) usa a URL completa do .env.
+        VITE_API_URL: ${VITE_API_URL:-/api/v1}
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      api:
         condition: service_healthy
     logging:
       driver: json-file

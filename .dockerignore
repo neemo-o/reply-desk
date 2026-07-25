@@ -1,0 +1,62 @@
+# ═══════════════════════════════════════════════════════════════════
+# .dockerignore — REPLY-DESK (referência comum)
+# ═══════════════════════════════════════════════════════════════════
+# O Docker lê .dockerignore do DIRETÓRIO DE CONTEXTO do build.
+# Os builds atuais usam context ./backend e ./frontend, então os
+# .dockerignore individuais em cada subdiretório são os que aplicam.
+# Este arquivo da raiz serve como referência e para um futuro build
+# que use contexto da raiz (ex: monorepo com Dockerfile único).
+# ═══════════════════════════════════════════════════════════════════
+
+# ─── SECRETS / ENV ────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ─── DEPENDÊNCIAS ────────────────────────────────────────────
+node_modules/
+**/node_modules/
+
+# ─── BUILD OUTPUT ─────────────────────────────────────────────
+dist/
+dist-ssr/
+dist-worker/
+**/dist/
+**/dist-ssr/
+*.tsbuildinfo
+
+# ─── GIT / IDE / EDITOR ───────────────────────────────────────
+.git/
+.gitignore
+.dockerignore
+.vscode/
+.idea/
+.cursor/
+.claude/
+
+# ─── LOGS ─────────────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+
+# ─── OS ──────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ─── TESTES / COBERTURA ──────────────────────────────────────
+coverage/
+test/
+tests/
+*.spec.ts
+*.spec.js
+e2e/
+
+# ─── DOCS (não precisam na imagem Docker) ─────────────────────
+*.md
+README.md
+
+# ─── DOCKER (evita recursão) ─────────────────────────────────
+docker-compose*.yml
+Dockerfile*
+.docker/

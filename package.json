@@ -1,0 +1,15 @@
+{
+  "name": "replydesk",
+  "version": "1.0.0",
+  "private": true,
+  "description": "",
+  "scripts": {
+    "stack:up": "docker compose up -d --build",
+    "stack:down": "docker compose down",
+    "stack:rebuild": "docker compose up -d --build --force-recreate",
+    "stack:ps": "docker compose ps",
+    "stack:logs": "docker compose logs -f --tail=50",
+    "stack:exec:api": "docker compose exec api sh",
+    "stack:exec:worker": "docker compose exec worker sh"
+  }
+}

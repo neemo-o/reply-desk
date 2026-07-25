@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { Check, Loader2, X, ArrowLeft, Sparkles, TrendingUp, TrendingDown } from "lucide-react";
 import { toast } from "sonner";
 import { OnboardingLayout } from "@/layouts/onboarding-layout";

@@ -1,0 +1,64 @@
+# ═══════════════════════════════════════════════════════════════════
+# .gitignore — ReplyDesk (raiz, global para backend + frontend + raiz)
+# ═══════════════════════════════════════════════════════════════════
+
+# ─── SECRETS / ENV (nunca commitar) ───────────────────────────
+.env
+.env.*
+!.env.example
+
+# ─── DEPENDÊNCIAS ─────────────────────────────────────────────
+node_modules/
+**/node_modules/
+
+# ─── BUILD OUTPUT ─────────────────────────────────────────────
+dist/
+dist-ssr/
+**/dist/
+**/dist-ssr/
+*.tsbuildinfo
+**/*.tsbuildinfo
+.npm/
+.vite/
+**/.vite/
+
+# ─── LOGS ─────────────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ─── EDITOR / IDE ─────────────────────────────────────────────
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.cursor/
+.claude/
+
+# ─── OS ──────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ─── TESTES / COBERTURA ──────────────────────────────────────
+coverage/
+**/coverage/
+.nyc_output/
+*.lcov
+
+# ─── PRISMA (artefatos de build locais — migrations SIM entram) ─
+# O esquema e as migrations são versionados (prisma/schema.prisma,
+# prisma/migrations/). Só ignoramos artefatos gerados locais:
+**/prisma/migrations/dev/
+
+# ─── DOCKER (volumes locais, se houver) ───────────────────────
+.docker/
