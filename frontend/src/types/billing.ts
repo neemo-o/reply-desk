@@ -1,3 +1,5 @@
+import type { TenantRole } from "./auth";
+
 export interface Plan {
   id: string;
   name: string;
@@ -48,5 +50,5 @@ export interface TenantMember {
   userId: string;
   status: string;
   user: { id: string; name: string; email: string };
-  role: { name: string };
+  role: { name: TenantRole };
 }

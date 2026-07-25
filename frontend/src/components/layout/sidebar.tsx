@@ -13,6 +13,7 @@ import {
   Menu,
   LayoutDashboard,
   Settings,
+  Users,
 } from "lucide-react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Logo } from "@/components/layout/logo";
@@ -36,6 +37,10 @@ import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { to: "/dashboard", label: "Visão geral", icon: LayoutDashboard, end: true },
+] as const;
+
+const MANAGEMENT_ITEMS = [
+  { to: "/dashboard/members", label: "Membros", icon: Users, end: false },
 ] as const;
 
 function initials(name: string) {
@@ -149,6 +154,9 @@ interface SidebarContentProps {
 }
 
 function SidebarContent({ onNavigate }: SidebarContentProps) {
+  const { role } = useAuth();
+  const showManagement = role === "owner" || role === "admin";
+
   return (
     <div className="flex h-full flex-col">
       {/* Logo */}
@@ -182,6 +190,36 @@ function SidebarContent({ onNavigate }: SidebarContentProps) {
             </NavLink>
           );
         })}
+
+        {showManagement && (
+          <>
+            <p className="px-3 pt-6 pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground/70">
+              Gestão
+            </p>
+            {MANAGEMENT_ITEMS.map((item) => {
+              const Icon = item.icon;
+              return (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.end}
+                  onClick={onNavigate}
+                  className={({ isActive }) =>
+                    cn(
+                      "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+                      isActive
+                        ? "bg-secondary text-foreground"
+                        : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+                    )
+                  }
+                >
+                  <Icon className="h-4.5 w-4.5 shrink-0" />
+                  {item.label}
+                </NavLink>
+              );
+            })}
+          </>
+        )}
       </nav>
 
       {/* Footer: user dropdown (opens upward) */}

@@ -1,16 +1,19 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { TenantsService } from './tenants.service';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { InviteUserDto } from './dto/invite-user.dto';
+import { UpdateTenantDto } from './dto/update-tenant.dto';
+import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CurrentTenant } from '../../common/decorators/current-tenant.decorator';
 import { TenantGuard } from '../../common/guards/tenant.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, Req } from '@nestjs/common';
 import { SkipSubscription } from '../../common/decorators/skip-subscription.decorator';
+import type { Request } from 'express';
 
 /**
  * 🔒 M6 — @SkipSubscription(): criar/listar tenants não requer assinatura ativa.
@@ -57,6 +60,17 @@ export class TenantsController {
     return this.tenantsService.findMine(userId);
   }
 
+  /**
+   * 🔒 Edição básica do tenant — owner only.
+   * Atualiza name, slug, logo, timezone, language.
+   */
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles('owner')
+  @Patch()
+  update(@CurrentTenant() tenantId: string, @Body() dto: UpdateTenantDto) {
+    return this.tenantsService.update(tenantId, dto);
+  }
+
   @UseGuards(TenantGuard, RolesGuard)
   @Roles('owner', 'admin')
   @Post('members')
@@ -68,5 +82,46 @@ export class TenantsController {
   @Get('members')
   listMembers(@CurrentTenant() tenantId: string) {
     return this.tenantsService.listMembers(tenantId);
+  }
+
+  /**
+   * 🔒 Remove membro — owner+admin.
+   * Admin não remove owner/admin; owner não remove último owner restante.
+   */
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles('owner', 'admin')
+  @Delete('members/:id')
+  removeMember(
+    @CurrentTenant() tenantId: string,
+    @Param('id') memberTenantUserId: string,
+    @Req() req: Request,
+  ) {
+    const actingRole = (req.user as { role?: string }).role ?? '';
+    const actingUserId = (req.user as { sub?: string }).sub ?? '';
+    return this.tenantsService.removeMember(tenantId, memberTenantUserId, actingRole, actingUserId);
+  }
+
+  /**
+   * 🔒 Altera role de membro — owner+admin.
+   * Admin não pode promover/rebaixar owners; último owner não pode ser rebaixado.
+   */
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles('owner', 'admin')
+  @Patch('members/:id')
+  updateMemberRole(
+    @CurrentTenant() tenantId: string,
+    @Param('id') memberTenantUserId: string,
+    @Body() dto: UpdateMemberRoleDto,
+    @Req() req: Request,
+  ) {
+    const actingRole = (req.user as { role?: string }).role ?? '';
+    const actingUserId = (req.user as { sub?: string }).sub ?? '';
+    return this.tenantsService.updateMemberRole(
+      tenantId,
+      memberTenantUserId,
+      dto,
+      actingRole,
+      actingUserId,
+    );
   }
 }
