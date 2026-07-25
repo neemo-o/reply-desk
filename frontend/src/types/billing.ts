@@ -44,6 +44,58 @@ export interface UpgradePreview {
   isUpgrade: boolean;
 }
 
+/** 🔒 M18 — Detalhes do cartão salvo do customer (Stripe). */
+export interface PaymentMethodDetails {
+  brand: string;
+  last4: string;
+  expMonth: number;
+  expYear: number;
+}
+
+/** 🔒 M18 — Próxima fatura a ser cobrada (upcoming invoice). */
+export interface UpcomingInvoice {
+  amountDue: number;
+  currency: string;
+  periodEnd: number;
+  lines: Array<{
+    description: string;
+    amount: number;
+    quantity: number;
+  }>;
+}
+
+/** 🔒 M18 — Fatura do histórico (paga ou pendente). */
+export interface InvoiceItem {
+  id: string;
+  number: string | null;
+  status: string;
+  amountDue: number;
+  amountPaid: number;
+  currency: string;
+  createdAt: number;
+  paidAt: number | null;
+  invoiceUrl: string | null;
+  invoicePdf: string | null;
+}
+
+/** 🔒 M18 — Resposta completa de GET /subscriptions/billing-details. */
+export interface BillingDetails {
+  paymentMethod: PaymentMethodDetails | null;
+  upcomingInvoice: UpcomingInvoice | null;
+  invoices: InvoiceItem[];
+  subscription: {
+    status: string;
+    planName: string;
+    billingType: string;
+  };
+}
+
+/** 🔒 M18 — Resposta de POST /subscriptions/update-payment-method. */
+export interface UpdatePaymentMethodResult {
+  checkoutUrl: string;
+  sessionId: string;
+}
+
 export interface TenantMember {
   id: string;
   tenantId: string;

@@ -1,5 +1,13 @@
 import { apiClient } from "./api-client";
-import type { BillingType, CheckoutResult, Plan, Subscription, UpgradePreview } from "@/types/billing";
+import type {
+  BillingType,
+  CheckoutResult,
+  Plan,
+  Subscription,
+  UpgradePreview,
+  BillingDetails,
+  UpdatePaymentMethodResult,
+} from "@/types/billing";
 
 export const subscriptionsService = {
   async listPlans(): Promise<Plan[]> {
@@ -36,5 +44,15 @@ export const subscriptionsService = {
 
   async reactivate(): Promise<void> {
     await apiClient.post("/subscriptions/reactivate");
+  },
+
+  async getBillingDetails(): Promise<BillingDetails> {
+    const { data } = await apiClient.get<BillingDetails>("/subscriptions/billing-details");
+    return data;
+  },
+
+  async updatePaymentMethod(): Promise<UpdatePaymentMethodResult> {
+    const { data } = await apiClient.post<UpdatePaymentMethodResult>("/subscriptions/update-payment-method");
+    return data;
   },
 };

@@ -76,4 +76,24 @@ export class SubscriptionsController {
   reactivate(@CurrentTenant() tenantId: string) {
     return this.subscriptionsService.reactivateSubscription(tenantId);
   }
+
+  /**
+   * 🔒 M18 — Detalhes de faturamento: cartão salvo, próxima fatura e
+   * histórico de faturas. Só faz sentido para assinaturas recorrentes.
+   */
+  @Roles('owner', 'admin')
+  @Get('billing-details')
+  getBillingDetails(@CurrentTenant() tenantId: string) {
+    return this.subscriptionsService.getBillingDetails(tenantId);
+  }
+
+  /**
+   * 🔒 M18 — Cria sessão de checkout em modo "setup" para o usuário
+   * atualizar o cartão de pagamento. Redireciona para URL do Stripe.
+   */
+  @Roles('owner', 'admin')
+  @Post('update-payment-method')
+  updatePaymentMethod(@CurrentTenant() tenantId: string) {
+    return this.subscriptionsService.createUpdatePaymentMethodSession(tenantId);
+  }
 }

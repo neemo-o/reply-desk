@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, Loader2, X } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -17,12 +17,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useSubscription } from "@/hooks/use-subscription";
-import { usePlans } from "@/hooks/use-plans";
 import { subscriptionsService } from "@/services/subscriptions-service";
-import type { UpgradePreview } from "@/types/billing";
 import { extractApiErrorMessage } from "@/lib/api-errors";
-import { getPlanFeatures } from "@/lib/plan-features";
-import { cn } from "@/lib/utils";
 
 const STATUS_LABELS: Record<string, { label: string; variant: "success" | "warning" | "destructive" | "secondary" }> = {
   active: { label: "Ativa", variant: "success" },
@@ -32,49 +28,23 @@ const STATUS_LABELS: Record<string, { label: string; variant: "success" | "warni
   cancelled: { label: "Cancelada", variant: "destructive" },
 };
 
-function formatPrice(price: string | number) {
-  return Number(price).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-}
-
 function formatDate(value?: string | null) {
   if (!value) return null;
   return new Date(value).toLocaleDateString("pt-BR");
 }
 
 type PendingAction =
-  | { kind: "upgrade"; planId: string; planName: string }
-  | { kind: "downgrade"; planId: string; planName: string }
   | { kind: "cancel" }
   | { kind: "reactivate" };
 
 export function BillingCard() {
   const queryClient = useQueryClient();
   const { data: subscription, isLoading: isLoadingSubscription } = useSubscription();
-  const { data: plans, isLoading: isLoadingPlans } = usePlans();
-  const [actionPlanId, setActionPlanId] = useState<string | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
   const [pending, setPending] = useState<PendingAction | null>(null);
-  const [preview, setPreview] = useState<UpgradePreview | null>(null);
-  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
 
   async function invalidateSubscription() {
     await queryClient.invalidateQueries({ queryKey: ["subscriptions", "me"] });
-  }
-
-  async function confirmUpgradeOrDowngrade(planId: string, kind: "upgrade" | "downgrade") {
-    setActionPlanId(planId);
-    setPending(null);
-    try {
-      await subscriptionsService.upgradePlan(planId);
-      await invalidateSubscription();
-      toast.success(
-        kind === "upgrade" ? "Plano atualizado com sucesso" : "Plano reduzido com sucesso",
-      );
-    } catch (error) {
-      toast.error(extractApiErrorMessage(error, "Não foi possível alterar o plano agora"));
-    } finally {
-      setActionPlanId(null);
-    }
   }
 
   async function confirmCancel() {
@@ -105,36 +75,16 @@ export function BillingCard() {
     }
   }
 
-  // 🔒 Quando o usuário clica em upgrade/downgrade, busca o preview da prorratação
-  // no Stripe antes de abrir o dialog de confirmação.
-  async function requestUpgradePreview(planId: string, kind: "upgrade" | "downgrade", planName: string) {
-    setPending({ kind, planId, planName });
-    setPreview(null);
-    setIsLoadingPreview(true);
-    try {
-      const result = await subscriptionsService.previewUpgrade(planId);
-      setPreview(result);
-    } catch (error) {
-      // Se o preview falhar (ex: assinatura em trial sem cartão), abre o dialog
-      // sem mostrar o valor — a confirmação ainda funciona.
-      toast.error(extractApiErrorMessage(error, "Não foi possível calcular a prorratação"));
-      setPending(null);
-    } finally {
-      setIsLoadingPreview(false);
-    }
-  }
-
   function closeDialog() {
     if (isRunning) return;
     setPending(null);
-    setPreview(null);
   }
 
   const status = subscription ? STATUS_LABELS[subscription.status] : null;
   const canCancel = subscription && ["active", "trialing", "past_due"].includes(subscription.status);
   const isScheduledCancel = Boolean(subscription?.cancelAtPeriodEnd);
 
-  // Texto contextual do AlertDialog (upgrade / downgrade / cancel / reactivate)
+  // Texto contextual do AlertDialog (cancel / reactivate)
   const dialogConfig = (() => {
     if (!pending) return null;
     if (pending.kind === "cancel") {
@@ -146,47 +96,17 @@ export function BillingCard() {
         actionVariant: "destructive" as const,
       };
     }
-    if (pending.kind === "reactivate") {
-      return {
-        title: "Reativar assinatura",
-        description:
-          "Tem certeza que deseja reativar? O cancelamento agendado será removido e sua assinatura continuará sendo cobrada mensalmente de forma automática.",
-        actionLabel: "Reativar assinatura",
-        actionVariant: "default" as const,
-      };
-    }
-    if (pending.kind === "upgrade") {
-      const prorationText = preview
-        ? preview.amountDue > 0
-          ? `Será adicionado ${formatPrice(preview.amountDue)} à sua próxima fatura (diferença proporcional dos dias restantes). `
-          : "Nenhuma cobrança adicional. "
-        : "";
-      return {
-        title: `Fazer upgrade para ${pending.planName}`,
-        description:
-          `${prorationText}O novo plano entra em vigor imediatamente e o valor integral será cobrado no próximo ciclo de cobrança.`,
-        actionLabel: "Confirmar upgrade",
-        actionVariant: "default" as const,
-      };
-    }
-    const prorationText = preview
-      ? preview.amountDue > 0
-        ? `Será adicionado ${formatPrice(preview.amountDue)} à sua próxima fatura (diferença proporcional dos dias restantes). `
-        : preview.amountDue === 0
-          ? "Nenhuma cobrança adicional — o novo valor entra em vigor no próximo ciclo. "
-          : `Você receberá um crédito de ${formatPrice(Math.abs(preview.amountDue))} na próxima fatura. `
-      : "";
     return {
-      title: `Fazer downgrade para ${pending.planName}`,
+      title: "Reativar assinatura",
       description:
-        `${prorationText}Você pode perder acesso a recursos ativos (sessões, usuários, bots) que excedam os limites do novo plano.`,
-      actionLabel: "Confirmar downgrade",
+        "Tem certeza que deseja reativar? O cancelamento agendado será removido e sua assinatura continuará sendo cobrada mensalmente de forma automática.",
+      actionLabel: "Reativar assinatura",
       actionVariant: "default" as const,
     };
   })();
 
-  const isRunning = actionPlanId !== null || isCancelling;
-  const isDialogLoading = isLoadingPreview || isRunning;
+  const isRunning = isCancelling;
+  const isDialogLoading = isRunning;
 
   return (
     <Card>
@@ -256,93 +176,11 @@ export function BillingCard() {
             </p>
           </div>
         ) : (
-          <div>
-            <p className="mb-3 text-sm font-medium">Planos disponíveis</p>
-            {isLoadingPlans ? (
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Skeleton className="h-56 w-full" />
-                <Skeleton className="h-56 w-full" />
-              </div>
-            ) : (
-              <div className="grid gap-4 sm:grid-cols-2">
-                {plans?.map((plan) => {
-                  const isCurrent = subscription?.planId === plan.id && subscription.isActive;
-                  const currentPrice = Number(subscription?.plan.price ?? 0);
-                  const planPrice = Number(plan.price);
-                  const action: "upgrade" | "downgrade" | "current" = isCurrent
-                    ? "current"
-                    : planPrice > currentPrice
-                      ? "upgrade"
-                      : "downgrade";
-                  const features = getPlanFeatures(plan.name);
-                  return (
-                    <div
-                      key={plan.id}
-                      className={cn(
-                        "relative flex flex-col rounded-lg border p-4",
-                        isCurrent
-                          ? "border-brand-500 ring-1 ring-brand-500"
-                          : plan.name.trim().toLowerCase() === "premium"
-                            ? "border-brand-500/60"
-                            : "border-border",
-                      )}
-                    >
-                      <div className="mb-2 flex items-center justify-between">
-                        <p className="font-display font-semibold">{plan.name}</p>
-                        {isCurrent && <Badge variant="success">Plano atual</Badge>}
-                      </div>
-                      <p className="mb-3 text-2xl font-semibold tracking-tight">
-                        {formatPrice(plan.price)}
-                        <span className="text-sm font-normal text-muted-foreground">/mês</span>
-                      </p>
-                      <div className="mb-4 flex-1 space-y-1.5 text-sm">
-                        {features
-                          ? features.map((feature) => (
-                            <div
-                              key={feature.label}
-                              className={cn(
-                                "flex items-center gap-2",
-                                feature.included ? "text-foreground" : "text-muted-foreground",
-                              )}
-                            >
-                              {feature.included ? (
-                                <Check className="h-3.5 w-3.5 shrink-0 text-brand-500" />
-                              ) : (
-                                <X className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                              )}
-                              <span className={feature.included ? "" : "line-through opacity-70"}>
-                                {feature.label}
-                              </span>
-                            </div>
-                          ))
-                          : (
-                            <div className="flex items-center gap-2 text-muted-foreground">
-                              <Check className="h-3.5 w-3.5 shrink-0 text-brand-500" />
-                              {plan.maxSessions} sessões · {plan.maxUsers} usuários · {plan.maxBots} bots
-                            </div>
-                          )}
-                      </div>
-                      <Button
-                        variant={isCurrent ? "secondary" : "outline"}
-                        size="sm"
-                        disabled={isCurrent || isRunning || !subscription}
-                        onClick={() =>
-                          requestUpgradePreview(plan.id, action === "current" ? "upgrade" : action, plan.name)
-                        }
-                      >
-                        {actionPlanId === plan.id && <Loader2 className="animate-spin" />}
-                        {isCurrent
-                          ? "Plano atual"
-                          : action === "upgrade"
-                            ? "Fazer upgrade"
-                            : "Fazer downgrade"}
-                      </Button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+          <a href="/choose-plan">
+            <Button variant="outline" size="sm" disabled={isRunning} className="w-full">
+              Gerenciar plano (upgrade/downgrade)
+            </Button>
+          </a>
         )}
       </CardContent>
 
@@ -356,10 +194,8 @@ export function BillingCard() {
           <AlertDialogHeader>
             <AlertDialogTitle>{dialogConfig?.title}</AlertDialogTitle>
             <AlertDialogDescription>
-              {isLoadingPreview
-                ? "Calculando prorratação com o Stripe..."
-                : dialogConfig?.description}
-            </AlertDialogDescription>
+            {dialogConfig?.description}
+          </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isDialogLoading}>Voltar</AlertDialogCancel>
@@ -371,10 +207,8 @@ export function BillingCard() {
                 if (!pending) return;
                 if (pending.kind === "cancel") {
                   void confirmCancel();
-                } else if (pending.kind === "reactivate") {
-                  void confirmReactivate();
                 } else {
-                  void confirmUpgradeOrDowngrade(pending.planId, pending.kind);
+                  void confirmReactivate();
                 }
               }}
             >

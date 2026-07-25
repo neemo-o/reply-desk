@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Loader2, XCircle } from "lucide-react";
 import { OnboardingLayout } from "@/layouts/onboarding-layout";
 import { Button } from "@/components/ui/button";
@@ -14,16 +14,31 @@ const MAX_ATTEMPTS = 20; // ~1 minuto
 export function PaymentCallbackPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { refreshUser } = useAuth();
   const checkoutResult = searchParams.get("checkout"); // "success" | "cancelled" | null
+  const setupResult = searchParams.get("setup"); // "success" | "cancelled" | null (M18 — atualização de cartão)
   const [attempts, setAttempts] = useState(0);
 
-  const wasCancelled = checkoutResult === "cancelled";
+  const wasCancelled = checkoutResult === "cancelled" || setupResult === "cancelled";
+
+  // 🔒 M18 — Se é retorno de setup (atualização de cartão), não precisa de
+  // polling de subscriptions — apenas invalida billing-details e redireciona.
+  const isSetupFlow = setupResult === "success";
+
+  useEffect(() => {
+    if (isSetupFlow) {
+      void queryClient
+        .invalidateQueries({ queryKey: ["subscriptions", "billing-details"] })
+        .then(() => navigate("/dashboard/profile", { replace: true }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSetupFlow]);
 
   const { data: subscription } = useQuery({
     queryKey: ["subscriptions", "me", "polling"],
     queryFn: () => subscriptionsService.getCurrent(),
-    enabled: !wasCancelled,
+    enabled: !wasCancelled && !isSetupFlow,
     refetchInterval: (query) => (query.state.data?.isActive ? false : POLL_INTERVAL_MS),
   });
 

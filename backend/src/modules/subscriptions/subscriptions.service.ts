@@ -1,4 +1,5 @@
 import {
+  BadGatewayException,
   BadRequestException,
   ConflictException,
   ForbiddenException,
@@ -425,6 +426,138 @@ export class SubscriptionsService {
     };
   }
 
+  // ════════════════════════════════════════════════════════════════════
+  // 🔒 M18 — Gestão de método de pagamento e faturas
+  // ════════════════════════════════════════════════════════════════════
+
+  /**
+   * Retorna os detalhes de faturamento para a aba de billing:
+   * - Cartão salvo (brand + last4 + validade)
+   * - Próxima fatura (valor + data)
+   * - Histórico de faturas pagas/pendentes
+   */
+  async getBillingDetails(tenantId: string) {
+    const subscription = await this.prisma.subscription.findFirst({
+      where: { tenantId },
+      orderBy: { createdAt: 'desc' },
+      include: { plan: true },
+    });
+    if (!subscription) {
+      throw new NotFoundException('Nenhuma assinatura encontrada para este tenant');
+    }
+    if (subscription.billingType !== 'recurring') {
+      throw new BadRequestException('Detalhes de faturamento só estão disponíveis para assinaturas recorrentes');
+    }
+    if (!subscription.externalId?.startsWith('sub_')) {
+      // Assinatura ainda não ativada no Stripe (checkout não completado)
+      return {
+        paymentMethod: null,
+        upcomingInvoice: null,
+        invoices: [],
+        subscription: {
+          status: subscription.status,
+          planName: subscription.plan.name,
+          billingType: subscription.billingType,
+        },
+      };
+    }
+
+    const customerId = await this.stripe.getCustomerIdFromSubscription(subscription.externalId);
+    if (!customerId) {
+      throw new BadGatewayException('Não foi possível obter o customer ID do Stripe');
+    }
+
+    const [paymentMethods, upcomingInvoice, invoices] = await Promise.all([
+      this.stripe.listPaymentMethods(customerId),
+      this.stripe.getUpcomingInvoice(customerId),
+      this.stripe.listInvoices(customerId, 12),
+    ]);
+
+    // Filtra só o cartão padrão para mostrar
+    const defaultCard = paymentMethods.find((pm) => pm.isDefault) ?? paymentMethods[0] ?? null;
+
+    return {
+      paymentMethod: defaultCard
+        ? {
+            brand: defaultCard.brand,
+            last4: defaultCard.last4,
+            expMonth: defaultCard.expMonth,
+            expYear: defaultCard.expYear,
+          }
+        : null,
+      upcomingInvoice: upcomingInvoice
+        ? {
+            amountDue: upcomingInvoice.amountDue / 100,
+            currency: upcomingInvoice.currency,
+            periodEnd: upcomingInvoice.periodEnd,
+            lines: upcomingInvoice.lines.map((l) => ({
+              description: l.description,
+              amount: l.amount / 100,
+              quantity: l.quantity,
+            })),
+          }
+        : null,
+      invoices: invoices.map((inv) => ({
+        id: inv.id,
+        number: inv.number,
+        status: inv.status,
+        amountDue: inv.amountDue / 100,
+        amountPaid: inv.amountPaid / 100,
+        currency: inv.currency,
+        createdAt: inv.createdAt,
+        paidAt: inv.paidAt,
+        invoiceUrl: inv.invoiceUrl,
+        invoicePdf: inv.invoicePdf,
+      })),
+      subscription: {
+        status: subscription.status,
+        planName: subscription.plan.name,
+        billingType: subscription.billingType,
+      },
+    };
+  }
+
+  /**
+   * Cria uma Checkout Session em modo "setup" para o usuário atualizar o
+   * cartão de pagamento. Retorna a URL de checkout para redirecionar.
+   */
+  async createUpdatePaymentMethodSession(tenantId: string) {
+    const subscription = await this.prisma.subscription.findFirst({
+      where: { tenantId, status: { in: ['active', 'trialing', 'past_due'] } },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!subscription) {
+      throw new NotFoundException('Nenhuma assinatura ativa encontrada');
+    }
+    if (subscription.billingType !== 'recurring') {
+      throw new BadRequestException('Atualização de cartão só está disponível para assinaturas recorrentes');
+    }
+    if (!subscription.externalId?.startsWith('sub_')) {
+      throw new BadRequestException('Assinatura ainda não foi ativada no Stripe — aguarde o processamento do pagamento');
+    }
+
+    const customerId = await this.stripe.getCustomerIdFromSubscription(subscription.externalId);
+    if (!customerId) {
+      throw new BadGatewayException('Não foi possível obter o customer ID do Stripe');
+    }
+
+    const baseSuccessUrl = this.config.get<string>('stripe.checkoutSuccessUrl');
+    const baseCancelUrl = this.config.get<string>('stripe.checkoutCancelUrl');
+    if (!baseSuccessUrl || !baseCancelUrl) {
+      throw new BadRequestException('STRIPE_CHECKOUT_SUCCESS_URL/CANCEL_URL não configuradas');
+    }
+
+    const successUrl = `${baseSuccessUrl}${baseSuccessUrl.includes('?') ? '&' : '?'}setup=success&session_id={CHECKOUT_SESSION_ID}`;
+    const cancelUrl = `${baseCancelUrl}${baseCancelUrl.includes('?') ? '&' : '?'}setup=cancelled`;
+
+    return this.stripe.createSetupCheckoutSession({
+      customerId,
+      tenantId,
+      successUrl,
+      cancelUrl,
+    });
+  }
+
   /**
    * 🔒 Processa webhooks do Stripe com validação de assinatura e idempotência.
    */
@@ -564,6 +697,34 @@ export class SubscriptionsService {
           expiresAt: this.oneMonthFromNow(),
         },
       });
+    } else if (session.mode === 'setup') {
+      // 🔒 M18 — Setup mode: usuário atualizou o cartão via Checkout Session.
+      // O Stripe já anexou o payment method ao customer. Precisamos definir
+      // como default e atualizar a subscription ativa para usar o novo cartão.
+      const setupIntentId = session.setup_intent as string | null;
+      if (setupIntentId) {
+        const setupIntent = await this.stripe.client.setupIntents.retrieve(setupIntentId);
+        const paymentMethodId = setupIntent.payment_method as string | null;
+        const customerId = setupIntent.customer as string | null;
+        if (paymentMethodId && customerId) {
+          // Busca a subscription ativa do tenant para atualizar o default_payment_method
+          const activeSub = await this.prisma.subscription.findFirst({
+            where: { tenantId, status: { in: ['active', 'trialing', 'past_due'] } },
+            orderBy: { createdAt: 'desc' },
+          });
+          const stripeSubId = activeSub?.externalId?.startsWith('sub_')
+            ? activeSub.externalId
+            : undefined;
+          await this.stripe.attachPaymentMethodAndSetDefault(
+            customerId,
+            paymentMethodId,
+            stripeSubId,
+          );
+          this.logger.log(
+            `Payment method atualizado para tenant ${tenantId} via setup checkout`,
+          );
+        }
+      }
     }
   }
 

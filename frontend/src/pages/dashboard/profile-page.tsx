@@ -3,6 +3,7 @@ import { DashboardLayout } from "@/layouts/dashboard-layout";
 import { AccountCard } from "@/components/dashboard/profile/account-card";
 import { OrganizationCard } from "@/components/dashboard/profile/organization-card";
 import { BillingCard } from "@/components/dashboard/profile/billing-card";
+import { PaymentDetailsCard } from "@/components/dashboard/profile/payment-details-card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/contexts/auth-provider";
 
@@ -46,8 +47,9 @@ export function ProfilePage() {
         </TabsContent>
 
         {isOwner && (
-          <TabsContent value="billing">
+          <TabsContent value="billing" className="space-y-6">
             <BillingCard />
+            <PaymentDetailsCard />
           </TabsContent>
         )}
       </Tabs>

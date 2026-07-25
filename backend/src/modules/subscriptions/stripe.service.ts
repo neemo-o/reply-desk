@@ -321,4 +321,215 @@ export class StripeService {
       oneTimePriceId: oneTimePrice.id,
     };
   }
+
+  // ════════════════════════════════════════════════════════════════════
+  // 🔒 M18 — Gestão de método de pagamento e faturas
+  // ════════════════════════════════════════════════════════════════════
+
+  /**
+   * Cria uma Checkout Session em modo "setup" para atualizar o cartão
+   * salvo do customer. O Stripe coleta o novo cartão e o anexa ao customer
+   * como payment method. Não cobra nada — só valida o cartão.
+   *
+   * Retorna a URL de checkout para redirecionar o usuário.
+   */
+  async createSetupCheckoutSession(input: {
+    customerId: string;
+    tenantId: string;
+    successUrl: string;
+    cancelUrl: string;
+  }): Promise<{ checkoutUrl: string; sessionId: string }> {
+    try {
+      const session = await this.client.checkout.sessions.create({
+        mode: 'setup',
+        customer: input.customerId,
+        client_reference_id: input.tenantId,
+        payment_method_types: ['card'],
+        success_url: input.successUrl,
+        cancel_url: input.cancelUrl,
+      });
+      return { checkoutUrl: session.url!, sessionId: session.id };
+    } catch (err) {
+      this.logger.error(`Stripe setup checkout falhou: ${(err as Error).message}`);
+      throw new BadGatewayException('Não foi possível criar a sessão de atualização de cartão no Stripe');
+    }
+  }
+
+  /**
+   * Lista os métodos de pagamento (cartões) salvos do customer.
+   * Retorna dados formatados: brand, last4, expMonth, expYear.
+   */
+  async listPaymentMethods(customerId: string): Promise<
+    Array<{
+      id: string;
+      brand: string;
+      last4: string;
+      expMonth: number;
+      expYear: number;
+      isDefault: boolean;
+    }>
+  > {
+    try {
+      const paymentMethods = await this.client.paymentMethods.list({
+        customer: customerId,
+        type: 'card',
+      });
+
+      // Busca o customer para saber o default payment method
+      const customer = await this.client.customers.retrieve(customerId);
+      // customers.retrieve pode retornar DeletedCustomer — filtramos com cast
+      const cust = customer as Stripe.Customer;
+      const defaultPmId =
+        cust.invoice_settings?.default_payment_method ?? cust.default_source;
+
+      return paymentMethods.data.map((pm) => ({
+        id: pm.id,
+        brand: pm.card?.brand ?? 'unknown',
+        last4: pm.card?.last4 ?? '****',
+        expMonth: pm.card?.exp_month ?? 0,
+        expYear: pm.card?.exp_year ?? 0,
+        isDefault: pm.id === defaultPmId,
+      }));
+    } catch (err) {
+      this.logger.error(`Stripe listPaymentMethods falhou: ${(err as Error).message}`);
+      throw new BadGatewayException('Não foi possível listar os métodos de pagamento no Stripe');
+    }
+  }
+
+  /**
+   * Define o payment method padrão do customer e o anexa à subscription
+   * ativa para que as próximas cobranças usem o novo cartão.
+   */
+  async attachPaymentMethodAndSetDefault(
+    customerId: string,
+    paymentMethodId: string,
+    stripeSubscriptionId?: string,
+  ): Promise<void> {
+    try {
+      // anexa o PM ao customer (se ainda não estiver)
+      await this.client.paymentMethods.attach(paymentMethodId, {
+        customer: customerId,
+      });
+
+      // define como default no customer (invoice_settings)
+      await this.client.customers.update(customerId, {
+        invoice_settings: { default_payment_method: paymentMethodId },
+      });
+
+      // se houver subscription ativa, atualiza o default_payment_method dela
+      if (stripeSubscriptionId) {
+        await this.client.subscriptions.update(stripeSubscriptionId, {
+          default_payment_method: paymentMethodId,
+        });
+      }
+    } catch (err) {
+      this.logger.error(`Stripe attachPaymentMethod falhou: ${(err as Error).message}`);
+      throw new BadGatewayException('Não foi possível atualizar o método de pagamento no Stripe');
+    }
+  }
+
+  /**
+   * Obtém a próxima fatura (upcoming invoice) do customer — a que será cobrada
+   * no próximo ciclo. Não cobra nada; só pré-visualiza.
+   */
+  async getUpcomingInvoice(
+    customerId: string,
+  ): Promise<{
+    amountDue: number;
+    currency: string;
+    periodStart: number;
+    periodEnd: number;
+    lines: Array<{
+      description: string;
+      amount: number;
+      quantity: number;
+      periodStart: number;
+      periodEnd: number;
+    }>;
+  } | null> {
+    try {
+      const invoice = await this.client.invoices.retrieveUpcoming({
+        customer: customerId,
+      });
+
+      return {
+        amountDue: invoice.amount_due,
+        currency: invoice.currency,
+        periodStart: invoice.period_start,
+        periodEnd: invoice.period_end,
+        lines: invoice.lines.data.map((line) => ({
+          description: line.description ?? '',
+          amount: line.amount,
+          quantity: line.quantity ?? 1,
+          periodStart: line.period.start,
+          periodEnd: line.period.end,
+        })),
+      };
+    } catch (err) {
+      // Se não houver upcoming invoice (ex: assinatura cancelada), retorna null
+      this.logger.warn(`Stripe getUpcomingInvoice: ${(err as Error).message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Lista as faturas (invoices) pagas e pendentes do customer — histórico
+   * de cobranças para o usuário monitorar.
+   */
+  async listInvoices(
+    customerId: string,
+    limit = 10,
+  ): Promise<
+    Array<{
+      id: string;
+      number: string | null;
+      status: string;
+      amountDue: number;
+      amountPaid: number;
+      currency: string;
+      createdAt: number;
+      dueDate: number | null;
+      paidAt: number | null;
+      invoiceUrl: string | null;
+      invoicePdf: string | null;
+    }>
+  > {
+    try {
+      const invoices = await this.client.invoices.list({
+        customer: customerId,
+        limit,
+      });
+
+      return invoices.data.map((inv) => ({
+        id: inv.id,
+        number: inv.number,
+        status: inv.status ?? 'unknown',
+        amountDue: inv.amount_due,
+        amountPaid: inv.amount_paid,
+        currency: inv.currency,
+        createdAt: inv.created,
+        dueDate: inv.due_date,
+        paidAt: inv.status === 'paid' ? inv.created : null,
+        invoiceUrl: inv.hosted_invoice_url ?? null,
+        invoicePdf: inv.invoice_pdf ?? null,
+      }));
+    } catch (err) {
+      this.logger.error(`Stripe listInvoices falhou: ${(err as Error).message}`);
+      throw new BadGatewayException('Não foi possível listar as faturas no Stripe');
+    }
+  }
+
+  /**
+   * Obtém o customer ID do Stripe a partir da subscription.
+   * Como não guardamos stripeCustomerId no DB, recuperamos via subscription.
+   */
+  async getCustomerIdFromSubscription(stripeSubscriptionId: string): Promise<string | null> {
+    try {
+      const sub = await this.client.subscriptions.retrieve(stripeSubscriptionId);
+      return typeof sub.customer === 'string' ? sub.customer : sub.customer?.id ?? null;
+    } catch (err) {
+      this.logger.warn(`Stripe getCustomerId falhou: ${(err as Error).message}`);
+      return null;
+    }
+  }
 }
