@@ -56,6 +56,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const snapshot = await authService.meSnapshot();
         applySnapshot(snapshot);
       } catch {
+        // 🔒 Se o snapshot falhar (token stale após rebuild do backend,
+        // segredo rotacionado, etc.), limpa a sessão silenciosamente em
+        // vez de deixar o erro 401 pipocar no console. O usuário cai na
+        // tela de login e pode autenticar de novo.
         clearSession();
       } finally {
         setIsInitializing(false);

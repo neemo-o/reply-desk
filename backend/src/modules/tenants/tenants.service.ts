@@ -325,6 +325,9 @@ export class TenantsService {
    * - Owner pode promover/rebaixar qualquer um (inclusive a/a partir de owner).
    * - Admin pode apenas entre admin↔agent (não pode criar/retirar owners).
    * - Não pode rebaixar o último owner (eguarda ≥1 owner sempre).
+   * - 🔒 M17 — Não pode promover um SEGUNDO owner: só pode existir 1 owner por
+   *   tenant. A troca de owner deve passar pela transferência de ownership
+   *   (POST /tenants/transfer-ownership), que é atômica e rebaixa o dono atual.
    * - Self-rebaixamento de owner é bloqueado se for o único.
    *
    * @param actingRole  role de quem chama ('owner' | 'admin')
@@ -358,6 +361,19 @@ export class TenantsService {
       throw new ForbiddenException('Administradores não podem promover ou rebaixar owners');
     }
 
+    // 🔒 M17 — Bloqueia promoção a um segundo owner. Só pode existir 1 owner:
+    // a troca de dono é feita pela transferência de ownership (atómica).
+    if (dto.roleName === 'owner' && currentRoleName !== 'owner') {
+      const ownerCount = await this.prisma.tenantUser.count({
+        where: { tenantId, role: { name: 'owner' }, status: 'active' },
+      });
+      if (ownerCount >= 1) {
+        throw new BadRequestException(
+          'Já existe um dono nesta organização. Use a transferência de ownership para trocar o dono.',
+        );
+      }
+    }
+
     // Guarda último owner: se está rebaixando um owner (owner → admin/agent),
     // precisa ter ≥2 owners ativos após a operação.
     if (currentRoleName === 'owner' && dto.roleName !== 'owner') {
@@ -366,7 +382,7 @@ export class TenantsService {
       });
       if (ownerCount <= 1) {
         throw new BadRequestException(
-          'Não é possível rebaixar o único owner da organização. Promova outro membro a owner antes.',
+          'Não é possível rebaixar o único owner da organização. Transfira o ownership antes.',
         );
       }
     }
@@ -384,6 +400,81 @@ export class TenantsService {
 
     // ⚡ Invalida cache de membership do usuário afetado.
     await this.invalidateMembershipCache(membership.userId, tenantId);
+
+    return { success: true };
+  }
+
+  /**
+   * 🔒 M17 — Transfere ownership do tenant de forma atômica.
+   *
+   * O dono atual (identificado por `actingUserId`) é rebaixado a admin e o
+   * membro alvo (`newOwnerTenantUserId`) é promovido a owner, numa transação.
+   *
+   * Regras:
+   * - Só o owner atual pode transferir (guard @Roles('owner') no controller).
+   * - O alvo precisa ser membro ativo do mesmo tenant.
+   * - O alvo não pode já ser owner (no-op explícito).
+   * - Não pode transferir para si mesmo.
+   * - Invalida cache de membership de ambos os envolvidos.
+   *
+   * @param actingUserId  id do usuário que faz a ação (deve ser o owner atual)
+   */
+  async transferOwnership(tenantId: string, newOwnerTenantUserId: string, actingUserId: string) {
+    // Valida o alvo.
+    const target = await this.prisma.tenantUser.findFirst({
+      where: { id: newOwnerTenantUserId, tenantId, status: 'active' },
+      select: { id: true, userId: true, roleId: true, role: { select: { name: true } } },
+    });
+    if (!target) {
+      throw new NotFoundException('Membro de destino não encontrado neste tenant');
+    }
+
+    // Não pode transferir para si mesmo.
+    if (target.userId === actingUserId) {
+      throw new BadRequestException('Você já é o dono desta organização');
+    }
+
+    // No-op se o alvo já é owner.
+    if (target.role.name === 'owner') {
+      return { success: true, noChange: true };
+    }
+
+    // Busca o owner atual (o solicitante) e valida que é owner.
+    const currentOwner = await this.prisma.tenantUser.findFirst({
+      where: { tenantId, userId: actingUserId, status: 'active' },
+      select: { id: true, roleId: true, role: { select: { name: true } } },
+    });
+    if (!currentOwner || currentOwner.role.name !== 'owner') {
+      throw new ForbiddenException('Apenas o dono pode transferir a propriedade da organização');
+    }
+
+    // Busca as roles owner e admin deste tenant.
+    const [ownerRole, adminRole] = await Promise.all([
+      this.prisma.role.findFirst({ where: { tenantId, name: 'owner' }, select: { id: true } }),
+      this.prisma.role.findFirst({ where: { tenantId, name: 'admin' }, select: { id: true } }),
+    ]);
+    if (!ownerRole || !adminRole) {
+      throw new NotFoundException('Roles owner/admin não encontradas neste tenant');
+    }
+
+    // Transação atômica: rebaixa o owner atual → admin, promove o alvo → owner.
+    await this.prisma.$transaction([
+      this.prisma.tenantUser.update({
+        where: { id: currentOwner.id },
+        data: { roleId: adminRole.id },
+      }),
+      this.prisma.tenantUser.update({
+        where: { id: target.id },
+        data: { roleId: ownerRole.id },
+      }),
+    ]);
+
+    // ⚡ Invalida cache de membership de ambos para o TenantGuard refletir
+    // as novas roles imediatamente.
+    await Promise.all([
+      this.invalidateMembershipCache(actingUserId, tenantId),
+      this.invalidateMembershipCache(target.userId, tenantId),
+    ]);
 
     return { success: true };
   }

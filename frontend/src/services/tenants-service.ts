@@ -89,4 +89,13 @@ export const tenantsService = {
     const { data } = await apiClient.patch(`/tenants/members/${memberId}`, payload);
     return data;
   },
+
+  async transferOwnership(
+    newOwnerTenantUserId: string,
+  ): Promise<{ success: boolean; noChange?: boolean }> {
+    const { data } = await apiClient.post(`/tenants/transfer-ownership`, {
+      newOwnerTenantUserId,
+    });
+    return data;
+  },
 };

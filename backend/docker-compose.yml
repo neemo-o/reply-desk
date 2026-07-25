@@ -86,6 +86,10 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
+      # 🔒 Garante NODE_ENV=development no compose de dev — o Dockerfile fixa
+      # ENV NODE_ENV=production, e sem este override o container roda em produção
+      # (fail-closed de env.validation pode rejeitar config de dev e causar 401).
+      NODE_ENV: development
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-whatsapp_saas}?schema=public
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -119,6 +123,7 @@ services:
     command: ["node", "dist/src/worker.js"]
     env_file: .env
     environment:
+      NODE_ENV: development
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-whatsapp_saas}?schema=public
       REDIS_HOST: redis
       REDIS_PORT: 6379

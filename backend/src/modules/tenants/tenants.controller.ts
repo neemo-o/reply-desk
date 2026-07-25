@@ -5,6 +5,7 @@ import { CreateTenantDto } from './dto/create-tenant.dto';
 import { InviteUserDto } from './dto/invite-user.dto';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
 import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
+import { TransferOwnershipDto } from './dto/transfer-ownership.dto';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CurrentTenant } from '../../common/decorators/current-tenant.decorator';
@@ -117,6 +118,21 @@ export class TenantsController {
     const actingRole = (req.user as { role?: string }).role ?? '';
     const actingUserId = (req.user as { sub?: string }).sub ?? '';
     return this.tenantsService.removeMember(tenantId, memberTenantUserId, actingRole, actingUserId);
+  }
+
+  /**
+   * 🔒 M17 — Transfere ownership do tenant — owner only.
+   * Rebaixa o dono atual a admin e.promove o membro alvo a owner (atômico).
+   */
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles('owner')
+  @Post('transfer-ownership')
+  transferOwnership(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('sub') actingUserId: string,
+    @Body() dto: TransferOwnershipDto,
+  ) {
+    return this.tenantsService.transferOwnership(tenantId, dto.newOwnerTenantUserId, actingUserId);
   }
 
   /**

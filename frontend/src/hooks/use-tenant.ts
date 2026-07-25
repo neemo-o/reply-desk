@@ -118,3 +118,24 @@ export function useUpdateMemberRole() {
     },
   });
 }
+
+export function useTransferOwnership() {
+  const queryClient = useQueryClient();
+  const { refreshUser } = useAuth();
+
+  return useMutation({
+    mutationFn: (newOwnerTenantUserId: string) =>
+      tenantsService.transferOwnership(newOwnerTenantUserId),
+    onSuccess: () => {
+      // Invalida lista de membros e snapshot do usuário — o antigo dono
+      // agora é admin e precisa ver a UI mudar imediatatamente.
+      queryClient.invalidateQueries({ queryKey: ["tenants", "members"] });
+      queryClient.invalidateQueries({ queryKey: ["auth", "me"] });
+      void refreshUser();
+      toast.success("Ownership transferido com sucesso. Você agora é administrador.");
+    },
+    onError: (error) => {
+      toast.error(extractApiErrorMessage(error, "Não foi possível transferir o ownership"));
+    },
+  });
+}
