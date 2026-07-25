@@ -520,16 +520,129 @@ export class StripeService {
   }
 
   /**
-   * Obtém o customer ID do Stripe a partir da subscription.
-   * Como não guardamos stripeCustomerId no DB, recuperamos via subscription.
+   * 🔒 Obtém os dados de pagamento de uma cobrança única (one-time).
+   *
+   * Para checkout sessions em modo `payment`, o Stripe **não cria um Customer**
+   * — só um PaymentIntent. Por isso:
+   *
+   * - Os dados do cartão usado estão em `charge.payment_method_details.card`
+   *   (recuperamos via `paymentIntents.retrieve` → `latest_charge`).
+   * - Não há `invoices` vinculadas a customer (a fatura da cobrança está no
+   *   próprio PaymentIntent — montamos um item de histórico sintético com
+   *   amount/last4 para mostrar na UI, já que não há objeto `Invoice` real).
+   * - Não há `upcoming invoice` — a cobrança foi avulsa.
+   *
+   * Retorna o cartão usado + o histórico da cobrança única, no mesmo formato
+   * que `listPaymentMethods`/`listInvoices`, para que a UI consiga renderizar
+   * detalhes de faturamento tanto para recurring quanto para one-time sem
+   * branches especiais no frontend.
    */
-  async getCustomerIdFromSubscription(stripeSubscriptionId: string): Promise<string | null> {
+  async getOneTimePaymentDetails(paymentIntentId: string): Promise<{
+    paymentMethod: {
+      brand: string;
+      last4: string;
+      expMonth: number;
+      expYear: number;
+    } | null;
+    invoices: Array<{
+      id: string;
+      number: string | null;
+      status: string;
+      amountDue: number;
+      amountPaid: number;
+      currency: string;
+      createdAt: number;
+      dueDate: number | null;
+      paidAt: number | null;
+      invoiceUrl: string | null;
+      invoicePdf: string | null;
+    }>;
+  }> {
     try {
-      const sub = await this.client.subscriptions.retrieve(stripeSubscriptionId);
-      return typeof sub.customer === 'string' ? sub.customer : sub.customer?.id ?? null;
+      const pi = await this.client.paymentIntents.retrieve(paymentIntentId);
+
+      // Card details vivem no charge latest
+      let paymentMethod: {
+        brand: string;
+        last4: string;
+        expMonth: number;
+        expYear: number;
+      } | null = null;
+
+      const chargeId = pi.latest_charge as string | null;
+      if (chargeId) {
+        const charge = await this.client.charges.retrieve(chargeId);
+        const card = charge.payment_method_details?.card;
+        if (card) {
+          paymentMethod = {
+            brand: card.brand ?? 'unknown',
+            last4: card.last4 ?? '****',
+            expMonth: card.exp_month ?? 0,
+            expYear: card.exp_year ?? 0,
+          };
+        }
+      }
+
+      // Monta um item de histórico sintético para a UI — não há Invoice
+      // real em modo payment, mas o usuário precisa ver a cobrança paga.
+      const paidAt = pi.status === 'succeeded' ? pi.created : null;
+      const invoices = pi.status === 'succeeded'
+        ? [{
+            id: pi.id,
+            number: chargeId ?? null,
+            status: 'paid',
+            amountDue: pi.amount,
+            amountPaid: pi.amount,
+            currency: pi.currency,
+            createdAt: pi.created,
+            dueDate: null,
+            paidAt,
+            invoiceUrl: null,
+            invoicePdf: null,
+          }]
+        : [];
+
+      return { paymentMethod, invoices };
+    } catch (err) {
+      this.logger.error(`Stripe getOneTimePaymentDetails falhou: ${(err as Error).message}`);
+      throw new BadGatewayException('Não foi possível obter os detalhes do pagamento único no Stripe');
+    }
+  }
+
+  /**
+   * Obtém o customer ID do Stripe a partir da subscription local.
+   *
+   * Para assinaturas recorrentes (externalId = sub_...), recupera via
+   * subscriptions.retrieve — o customer está vinculado à subscription.
+   *
+   * Para pagamento único (externalId = cs_... — checkout session), recupera
+   * via checkout.sessions.retrieve — o customer está vinculado à session.
+   * Como a session one-time não cria subscription no Stripe, este é o único
+   * caminho para obter o customer ID e listar cartões/faturas.
+   *
+   * Não guardamos stripeCustomerId no DB; recuperamos em runtime.
+   */
+  async getCustomerId(externalId: string): Promise<string | null> {
+    try {
+      if (externalId.startsWith('sub_')) {
+        const sub = await this.client.subscriptions.retrieve(externalId);
+        return typeof sub.customer === 'string' ? sub.customer : sub.customer?.id ?? null;
+      }
+      if (externalId.startsWith('cs_')) {
+        const session = await this.client.checkout.sessions.retrieve(externalId);
+        const customer = session.customer;
+        return typeof customer === 'string' ? customer : customer?.id ?? null;
+      }
+      this.logger.warn(`getCustomerId: externalId não reconhecido: ${externalId}`);
+      return null;
     } catch (err) {
       this.logger.warn(`Stripe getCustomerId falhou: ${(err as Error).message}`);
       return null;
     }
+  }
+
+  /** Mantido por compatibilidade — redireciona para getCustomerId(). */
+  async getCustomerIdFromSubscription(stripeSubscriptionId: string): Promise<string | null> {
+    return this.getCustomerId(stripeSubscriptionId);
   }
 }

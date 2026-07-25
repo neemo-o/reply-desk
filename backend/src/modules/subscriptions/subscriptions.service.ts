@@ -445,11 +445,11 @@ export class SubscriptionsService {
     if (!subscription) {
       throw new NotFoundException('Nenhuma assinatura encontrada para este tenant');
     }
-    if (subscription.billingType !== 'recurring') {
-      throw new BadRequestException('Detalhes de faturamento só estão disponíveis para assinaturas recorrentes');
-    }
-    if (!subscription.externalId?.startsWith('sub_')) {
-      // Assinatura ainda não ativada no Stripe (checkout não completado)
+
+    // 🔒 Sem externalId ainda (checkout não completado) — não há o que consultar
+    // no Stripe. Retorna estrutura vazia para o frontend renderizar o estado
+    // de "aguardando pagamento" sem erro.
+    if (!subscription.externalId) {
       return {
         paymentMethod: null,
         upcomingInvoice: null,
@@ -462,7 +462,58 @@ export class SubscriptionsService {
       };
     }
 
-    const customerId = await this.stripe.getCustomerIdFromSubscription(subscription.externalId);
+    // 🔒 Pagamento único (one_time): o Stripe NÃO cria Customer em modo payment,
+    // só um PaymentIntent. Os dados do cartão estão no charge, não em
+    // payment_methods do customer. Buscamos diretamente pelo PaymentIntent
+    // (last_payment_id) — retorna cartão usado + item de histórico sintético.
+    //
+    // Para recorrente (recurring): resolve customer via subscription, lista
+    // payment_methods + upcoming invoice + invoices pagas.
+    const isRecurring = subscription.billingType === 'recurring';
+
+    if (!isRecurring) {
+      // Para one_time, o last_payment_id contém o PaymentIntent (pi_...).
+      const paymentIntentId = subscription.lastPaymentId;
+      if (!paymentIntentId) {
+        return {
+          paymentMethod: null,
+          upcomingInvoice: null,
+          invoices: [],
+          subscription: {
+            status: subscription.status,
+            planName: subscription.plan.name,
+            billingType: subscription.billingType,
+          },
+        };
+      }
+
+      const oneTime = await this.stripe.getOneTimePaymentDetails(paymentIntentId);
+
+      return {
+        paymentMethod: oneTime.paymentMethod,
+        upcomingInvoice: null,
+        invoices: oneTime.invoices.map((inv) => ({
+          id: inv.id,
+          number: inv.number,
+          status: inv.status,
+          amountDue: inv.amountDue / 100,
+          amountPaid: inv.amountPaid / 100,
+          currency: inv.currency,
+          createdAt: inv.createdAt,
+          paidAt: inv.paidAt,
+          invoiceUrl: inv.invoiceUrl,
+          invoicePdf: inv.invoicePdf,
+        })),
+        subscription: {
+          status: subscription.status,
+          planName: subscription.plan.name,
+          billingType: subscription.billingType,
+        },
+      };
+    }
+
+    // 🔒 Recorrente: resolve customer ID via subscription no Stripe.
+    const customerId = await this.stripe.getCustomerId(subscription.externalId);
     if (!customerId) {
       throw new BadGatewayException('Não foi possível obter o customer ID do Stripe');
     }
@@ -529,6 +580,9 @@ export class SubscriptionsService {
     if (!subscription) {
       throw new NotFoundException('Nenhuma assinatura ativa encontrada');
     }
+    // 🔒 Atualização de cartão só faz sentido para assinaturas recorrentes
+    // (a cobrança é automática). Pagamento único usa o cartão apenas uma vez
+    // no checkout — não há subscription no Stripe para definir default_payment_method.
     if (subscription.billingType !== 'recurring') {
       throw new BadRequestException('Atualização de cartão só está disponível para assinaturas recorrentes');
     }
@@ -536,7 +590,7 @@ export class SubscriptionsService {
       throw new BadRequestException('Assinatura ainda não foi ativada no Stripe — aguarde o processamento do pagamento');
     }
 
-    const customerId = await this.stripe.getCustomerIdFromSubscription(subscription.externalId);
+    const customerId = await this.stripe.getCustomerId(subscription.externalId);
     if (!customerId) {
       throw new BadGatewayException('Não foi possível obter o customer ID do Stripe');
     }

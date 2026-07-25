@@ -66,9 +66,34 @@ export function PaymentDetailsCard() {
     );
   }
 
-  // Se deu erro (ex: assinatura não recorrente, ou ainda não ativada no Stripe),
-  // não mostra o card — o BillingCard já mostra o estado da assinatura.
-  if (isError || !details) return null;
+  // 🔒 Se ocorreu erro ao carregar os detalhes (ex: webhook ainda não
+  // processou, falha temporária no Stripe), mostra mensagem no próprio card
+  // em vez de sumir silenciosamente. O BillingCard já mostra o estado da
+  // assinatura; aqui focamos no feedback de que não foi possível carregar
+  // os detalhes de faturamento.
+  if (isError || !details) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <CreditCard className="h-5 w-5" />
+            Método de pagamento e faturas
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm">
+            <p className="font-medium text-amber-600 dark:text-amber-400">
+              Detalhes de faturamento indisponíveis
+            </p>
+            <p className="mt-1 text-muted-foreground">
+              Não foi possível carregar as informações de cartão e faturas agora.
+              Atualize a página em alguns instantes.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   // Sempre mostra o card se chegou aqui (o backend só retorna dados para
   // assinaturas recorrentes). Mesmo sem cartão/invoices, o usuário precisa
@@ -77,6 +102,7 @@ export function PaymentDetailsCard() {
   const hasPaymentMethod = Boolean(details.paymentMethod);
   const hasInvoices = details.invoices.length > 0;
   const hasUpcoming = Boolean(details.upcomingInvoice);
+  const isOneTime = details.subscription.billingType === "one_time";
 
   return (
     <Card>
@@ -108,29 +134,37 @@ export function PaymentDetailsCard() {
                 </p>
               </div>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={updatePm.isPending}
-              onClick={() => updatePm.mutate()}
-            >
-              {updatePm.isPending && <Loader2 className="animate-spin" />}
-              Atualizar cartão
-            </Button>
+            {/* Bloco "Atualizar cartão" só faz sentido para assinaturas recorrentes
+                (o cartão salvo é cobrado automaticamente a cada mês). */}
+            {!isOneTime && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={updatePm.isPending}
+                onClick={() => updatePm.mutate()}
+              >
+                {updatePm.isPending && <Loader2 className="animate-spin" />}
+                Atualizar cartão
+              </Button>
+            )}
           </div>
         )}
 
         {/* ── Se não tem cartão, mostra aviso com botão para adicionar ── */}
-        {!hasPaymentMethod && (
+        {/* Para pagamento único, o "Adicionar cartão" não tem efeito prático
+            (cartão não fica salvo em modo payment) — só mostra o aviso. */}
+        {!hasPaymentMethod && !isOneTime && (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4">
             <div>
               <p className="font-medium text-amber-600 dark:text-amber-400">
                 Nenhum cartão salvo
               </p>
               <p className="mt-1 text-sm text-muted-foreground">
-                {details.subscription.status === "trialing"
-                  ? "Adicione um cartão para continuar usando o plano após o período de teste."
-                  : "Adicione um cartão para que as próximas cobranças sejam processadas automaticamente."}
+                {isOneTime
+                  ? "Adicione um cartão para pagamentos únicos futuros mais rápidos."
+                  : details.subscription.status === "trialing"
+                    ? "Adicione um cartão para continuar usando o plano após o período de teste."
+                    : "Adicione um cartão para que as próximas cobranças sejam processadas automaticamente."}
               </p>
             </div>
             <Button
@@ -146,7 +180,20 @@ export function PaymentDetailsCard() {
           </div>
         )}
 
-        {/* ── Próxima fatura ── */}
+        {/* ── Aviso para pagamento único: não há cobrança recorrente ── */}
+        {isOneTime && (
+          <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-4 text-sm">
+            <p className="font-medium text-blue-600 dark:text-blue-400">
+              Pagamento único (avulso)
+            </p>
+            <p className="mt-1 text-muted-foreground">
+              Sua assinatura foi paga para 1 mês de acesso e não gera cobranças automáticas.
+              Para continuar usando após o vencimento, faça um novo pagamento.
+            </p>
+          </div>
+        )}
+
+        {/* ── Próxima fatura (só recorrente) ── */}
         {hasUpcoming && details.upcomingInvoice && (
           <div className="rounded-lg border border-border p-4">
             <p className="mb-2 flex items-center gap-2 text-sm font-medium">
