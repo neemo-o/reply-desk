@@ -77,6 +77,7 @@ model Tenant {
   auditLogs      AuditLog[]
   dailyMetrics   DailyMetric[]
   knowledgeBases KnowledgeBase[]
+  invitations    Invitation[]
 
   @@map("tenants")
 }
@@ -542,4 +543,26 @@ model DailyMetric {
 
   @@unique([tenantId, date])
   @@map("daily_metrics")
+}
+
+/// 🔒 Convite enviado para um email que ainda não tem conta.
+/// Quando o usuário se cadastra e verifica o email, o sistema detecta
+/// invitações pendentes para aquele email, cria o TenantUser com a role
+/// escolhida e marca a invite como `accepted`. Assim o usuário entra
+/// direto na org sem precisar criar tenant próprio.
+model Invitation {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  email     String
+  roleName  String   @map("role_name") // owner | admin | agent
+  status    String   @default("pending") // pending | accepted | cancelled
+  invitedBy String   @map("invited_by") // userId de quem enviou
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, email])
+  @@index([email, status]) // lookup por email ao verificar
+  @@map("invitations")
 }

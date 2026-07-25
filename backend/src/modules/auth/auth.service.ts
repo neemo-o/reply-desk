@@ -76,22 +76,23 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto) {
+    const normalizedEmail = dto.email.toLowerCase();
     const existing = await this.prisma.user.findUnique({
-      where: { email: dto.email },
+      where: { email: normalizedEmail },
     });
     if (existing) {
       throw new ConflictException('E-mail já cadastrado');
     }
 
     // 🔒 E6 — Valida domínio do email (MX record + blocklist de descartáveis)
-    const validDomain = await isValidEmailDomain(dto.email);
+    const validDomain = await isValidEmailDomain(normalizedEmail);
     if (!validDomain) {
       throw new BadRequestException('Domínio de e-mail inválido ou não aceita recebimento de mensagens');
     }
 
     const passwordHash = await argon2.hash(dto.password, ARGON2_OPTS);
     const user = await this.prisma.user.create({
-      data: { name: dto.name, email: dto.email, passwordHash },
+      data: { name: dto.name, email: normalizedEmail, passwordHash },
     });
 
     // Dispara o OTP em background — falha no envio não deve bloquear o cadastro
@@ -103,7 +104,7 @@ export class AuthService {
 
   async login(dto: LoginDto) {
     const user = await this.prisma.user.findUnique({
-      where: { email: dto.email },
+      where: { email: dto.email.toLowerCase() },
     });
     if (!user || !(await argon2.verify(user.passwordHash, dto.password))) {
       throw new UnauthorizedException('Credenciais inválidas');

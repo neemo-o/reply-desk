@@ -39,6 +39,14 @@ export interface InviteMemberPayload {
   roleName: TenantRole;
 }
 
+export interface Invitation {
+  id: string;
+  email: string;
+  roleName: TenantRole;
+  status: string;
+  createdAt: string;
+}
+
 export const tenantsService = {
   async findMine(): Promise<TenantSummary[]> {
     const { data } = await apiClient.get<TenantSummary[]>("/tenants/mine");
@@ -52,6 +60,16 @@ export const tenantsService = {
 
   async inviteMember(payload: InviteMemberPayload): Promise<void> {
     await apiClient.post("/tenants/members", payload);
+  },
+
+  async listInvitations(): Promise<Invitation[]> {
+    const { data } = await apiClient.get<Invitation[]>("/tenants/invitations");
+    return data;
+  },
+
+  async cancelInvitation(invitationId: string): Promise<{ success: boolean }> {
+    const { data } = await apiClient.delete(`/tenants/invitations/${invitationId}`);
+    return data;
   },
 
   async updateTenant(payload: UpdateTenantPayload): Promise<TenantDetails> {

@@ -148,7 +148,18 @@ export class TenantsService {
     }
   }
 
-  async inviteUser(tenantId: string, dto: InviteUserDto) {
+  /**
+   * 🔒 Cria convite para email que ainda não tem conta.
+   * Não exige que o User exista — a invitation fica pendente e é resgatada
+   * quando o usuário se cadastra e verifica o email.
+   *
+   * Regras:
+   * - Se já existe TenantUser ativo com aquele email → Conflict (já é membro).
+   * - Se já existe Invitation pending para aquele email neste tenant → Conflict.
+   * - Se o User já existe e já é membro → Conflict.
+   * - Se o User já existe mas NÃO é membro → cria TenantUser direto (aceita imediato).
+   */
+  async inviteUser(tenantId: string, dto: InviteUserDto, invitedBy: string) {
     // 🔒 M7 — Verifica limite de usuários do plano antes de convidar
     await this.planLimits.assertCanInviteUser(tenantId);
 
@@ -158,23 +169,88 @@ export class TenantsService {
     });
     if (!role) throw new NotFoundException('Papel (role) não encontrado neste tenant');
 
-    const user = await this.prisma.user.findUnique({
-      where: { email: dto.email.toLowerCase() },
+    const normalizedEmail = dto.email.toLowerCase();
+
+    // Checa se o usuário já existe e já é membro deste tenant.
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email: normalizedEmail },
       select: { id: true },
     });
-    if (!user) throw new NotFoundException('Usuário não encontrado — peça para ele se cadastrar primeiro');
 
-    try {
-      return await this.prisma.tenantUser.create({
-        data: { tenantId, userId: user.id, roleId: role.id },
-        select: { id: true, tenantId: true, userId: true, status: true },
+    if (existingUser) {
+      const existingMembership = await this.prisma.tenantUser.findFirst({
+        where: { tenantId, userId: existingUser.id, status: 'active' },
+        select: { id: true },
       });
+      if (existingMembership) {
+        throw new ConflictException('Usuário já é membro deste tenant');
+      }
+
+      // Usuário existe mas não é membro — adiciona direto.
+      try {
+        return await this.prisma.tenantUser.create({
+          data: { tenantId, userId: existingUser.id, roleId: role.id },
+          select: { id: true, tenantId: true, userId: true, status: true },
+        });
+      } catch (err: unknown) {
+        if (err && typeof err === 'object' && 'code' in err && (err as { code: string }).code === 'P2002') {
+          throw new ConflictException('Usuário já é membro deste tenant');
+        }
+        throw err;
+      }
+    }
+
+    // Usuário não existe — cria invitation pendente.
+    try {
+      const invitation = await this.prisma.invitation.create({
+        data: {
+          tenantId,
+          email: normalizedEmail,
+          roleName: dto.roleName,
+          invitedBy,
+          status: 'pending',
+        },
+        select: { id: true, email: true, roleName: true, status: true, createdAt: true },
+      });
+
+      // TODO: enviar email de convite via MailService quando o trail de
+      // registro for implementado. Por ora, o owner compartilha o link de
+      // registro manualmente.
+      this.logger.log(`Convite criado para ${normalizedEmail} no tenant ${tenantId}`);
+
+      return invitation;
     } catch (err: unknown) {
       if (err && typeof err === 'object' && 'code' in err && (err as { code: string }).code === 'P2002') {
-        throw new ConflictException('Usuário já é membro deste tenant');
+        throw new ConflictException('Convite já enviado para este email neste tenant');
       }
       throw err;
     }
+  }
+
+  async listInvitations(tenantId: string) {
+    return this.prisma.invitation.findMany({
+      where: { tenantId, status: 'pending' },
+      select: { id: true, email: true, roleName: true, status: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async cancelInvitation(tenantId: string, invitationId: string) {
+    const invitation = await this.prisma.invitation.findFirst({
+      where: { id: invitationId, tenantId },
+      select: { id: true, status: true },
+    });
+    if (!invitation) throw new NotFoundException('Convite não encontrado');
+    if (invitation.status !== 'pending') {
+      throw new BadRequestException('Convite não está mais pendente');
+    }
+
+    await this.prisma.invitation.update({
+      where: { id: invitationId },
+      data: { status: 'cancelled' },
+    });
+
+    return { success: true };
   }
 
   async listMembers(tenantId: string) {

@@ -68,10 +68,37 @@ export function useInviteMember() {
     mutationFn: (payload: InviteMemberPayload) => tenantsService.inviteMember(payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tenants", "members"] });
-      toast.success("Membro convidado com sucesso");
+      queryClient.invalidateQueries({ queryKey: ["tenants", "invitations"] });
+      toast.success("Convite enviado com sucesso");
     },
     onError: (error) => {
       toast.error(extractApiErrorMessage(error, "Não foi possível convidar o membro"));
+    },
+  });
+}
+
+export function useTenantInvitations() {
+  const { isAuthenticated, tenant, role } = useAuth();
+  const canManage = role === "owner" || role === "admin";
+
+  return useQuery({
+    queryKey: ["tenants", "invitations", tenant?.id],
+    queryFn: () => tenantsService.listInvitations(),
+    enabled: isAuthenticated && Boolean(tenant) && canManage,
+  });
+}
+
+export function useCancelInvitation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (invitationId: string) => tenantsService.cancelInvitation(invitationId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tenants", "invitations"] });
+      toast.success("Convite cancelado");
+    },
+    onError: (error) => {
+      toast.error(extractApiErrorMessage(error, "Não foi possível cancelar o convite"));
     },
   });
 }

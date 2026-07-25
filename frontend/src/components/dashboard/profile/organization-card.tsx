@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { useTenantMembers, useTenantSummary, useUpdateTenant } from "@/hooks/use-tenant";
+import { useTenantSummary, useUpdateTenant } from "@/hooks/use-tenant";
 import { useAuth } from "@/contexts/auth-provider";
 import type { TenantSummary } from "@/services/tenants-service";
 
@@ -54,7 +54,6 @@ type OrgFormValues = z.infer<typeof orgSchema>;
 export function OrganizationCard() {
   const { tenant, role } = useAuth();
   const { data: summary, isLoading: isLoadingSummary } = useTenantSummary();
-  const { data: members, isLoading: isLoadingMembers } = useTenantMembers();
   const isOwner = role === "owner";
 
   return (
@@ -64,7 +63,7 @@ export function OrganizationCard() {
         <CardDescription>
           {isOwner
             ? "Edite os dados do seu workspace. Apenas o dono pode alterar."
-            : "Dados do workspace e das pessoas com acesso a ele."}
+            : "Dados do workspace."}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -83,30 +82,6 @@ export function OrganizationCard() {
             </Badge>
           </div>
         )}
-
-        <div>
-          <p className="mb-2 text-sm font-medium">Membros</p>
-          {isLoadingMembers ? (
-            <Skeleton className="h-24 w-full" />
-          ) : (
-            <div className="divide-y divide-border rounded-lg border border-border">
-              {members?.map((member) => (
-                <div key={member.id} className="flex items-center justify-between gap-3 px-4 py-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">{member.user.name}</p>
-                    <p className="truncate text-xs text-muted-foreground">{member.user.email}</p>
-                  </div>
-                  <Badge variant="outline" className="shrink-0">
-                    {ROLE_LABELS[member.role.name] ?? member.role.name}
-                  </Badge>
-                </div>
-              ))}
-              {members?.length === 0 && (
-                <p className="px-4 py-3 text-sm text-muted-foreground">Nenhum membro encontrado.</p>
-              )}
-            </div>
-          )}
-        </div>
       </CardContent>
     </Card>
   );

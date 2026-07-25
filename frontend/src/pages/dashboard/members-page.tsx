@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { UserPlus, Loader2, Trash2, Users } from "lucide-react";
+import { UserPlus, Loader2, Trash2, Users, MailOpen, X } from "lucide-react";
 import { DashboardLayout } from "@/layouts/dashboard-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -22,7 +22,14 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { useAuth } from "@/contexts/auth-provider";
-import { useTenantMembers, useInviteMember, useRemoveMember, useUpdateMemberRole } from "@/hooks/use-tenant";
+import {
+  useTenantMembers,
+  useTenantInvitations,
+  useInviteMember,
+  useRemoveMember,
+  useCancelInvitation,
+  useUpdateMemberRole,
+} from "@/hooks/use-tenant";
 import type { TenantRole } from "@/types/auth";
 
 const ROLE_LABELS: Record<string, string> = {
@@ -83,7 +90,10 @@ export function MembersPage() {
         {canManage && <InviteMemberDialog />}
       </div>
 
-      <Card>
+      <div className="space-y-6">
+        <PendingInvitations />
+
+        <Card>
         <CardHeader>
           <CardTitle>Pessoas na organização</CardTitle>
           <CardDescription>
@@ -158,7 +168,66 @@ export function MembersPage() {
           )}
         </CardContent>
       </Card>
+      </div>
     </DashboardLayout>
+  );
+}
+
+function PendingInvitations() {
+  const { data: invitations, isLoading } = useTenantInvitations();
+  const cancelInvitation = useCancelInvitation();
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-lg">
+          <MailOpen className="h-5 w-5" />
+          Convites pendentes
+        </CardTitle>
+        <CardDescription>
+          {!isLoading && invitations && ` ${invitations.length} convite(s) aguardando o usuário se cadastrar e verificar o e-mail.`}
+          {isLoading && " Carregando convites..."}
+          {!isLoading && (!invitations || invitations.length === 0) && " No momento não há convites aguardando aceitação."}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <Skeleton className="h-16 w-full" />
+        ) : !invitations || invitations.length === 0 ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">
+            Nenhum convite pendente. Use o botão "Convidar membro" para adicionar pessoas à organização.
+          </p>
+        ) : (
+          <div className="divide-y divide-border rounded-lg border border-border">
+            {invitations.map((invitation) => (
+              <div
+                key={invitation.id}
+                className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{invitation.email}</p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    Convidado como {ROLE_LABELS[invitation.roleName] ?? invitation.roleName}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge variant="warning">Pendente</Badge>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Cancelar convite de ${invitation.email}`}
+                    disabled={cancelInvitation.isPending}
+                    onClick={() => cancelInvitation.mutate(invitation.id)}
+                  >
+                    <X className="h-4 w-4 text-destructive" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -182,7 +251,7 @@ function InviteMemberDialog() {
       reset();
       setOpen(false);
     } catch {
-      // onError do hook já exibe toast
+      // onError do hook já exibe toast — mantém o dialog aberto para correção
     }
   }
 
@@ -198,8 +267,9 @@ function InviteMemberDialog() {
         <AlertDialogHeader>
           <AlertDialogTitle>Convidar membro</AlertDialogTitle>
           <AlertDialogDescription>
-            O usuário precisa já ter uma conta no ReplyDesk com este e-mail.
-            Se ainda não tem, peça para ele se cadastrar primeiro.
+            O convidado vai receber um link de cadastro por e-mail. Ao se cadastrar
+            e confirmar o e-mail com este endereço, ele entra direto na organização
+            com o papel escolhido — sem precisar criar workspace próprio.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
@@ -226,15 +296,21 @@ function InviteMemberDialog() {
               <option value="admin">Administrador</option>
             </select>
             <p className="text-xs text-muted-foreground">
-              Owners só podem ser adicionados pela tela de gestão de roles.
+              O convidado receberá um e-mail com o link de cadastro.
             </p>
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction type="submit" disabled={inviteMember.isPending}>
+            {/* Button normal com type="submit" em vez de AlertDialogAction:
+                AlertDialogAction fecha o dialog automaticamente (Radix),
+                o que desmonta o form antes do submit assíncrono completar
+                e causa o warning "Form submission canceled because the form
+                is not connected". Com Button, o form controla o submit e
+                nós fechamos o dialog manualmente em onSubmit após o mutate. */}
+            <Button type="submit" disabled={inviteMember.isPending}>
               {inviteMember.isPending && <Loader2 className="animate-spin" />}
               Convidar
-            </AlertDialogAction>
+            </Button>
           </AlertDialogFooter>
         </form>
       </AlertDialogContent>

@@ -144,11 +144,80 @@ export class EmailVerificationService {
 
   /**
    * 🔒 M1 — Garante que o usuário tem pelo menos um tenant após verificar email.
-   * Cria um tenant com slug derivado do nome do usuário + uuid curto.
-   * Idempotente: se o usuário já tem tenant, não cria outro.
+   *
+   * FLUXO DE CONVITE (A2):
+   * 1. Owner envia convite para email → cria Invitation com status 'pending'.
+   * 2. Usuário convidado se cadastra com aquele email.
+   * 3. Ao verificar email, este método detecta invitations pendentes para
+   *    aquele email, cria TenantUser com a role escolhida pelo owner, marca
+   *    a invitation como 'accepted', e NÃO cria tenant próprio.
+   * 4. Usuário entra direto na org convidada.
+   *
+   * Se não há invitations pendentes, cria tenant próprio (comportamento
+   * original — usuário é owner de novo tenant).
    */
   private async ensureTenantForUser(userId: string): Promise<void> {
     try {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { name: true, email: true },
+      });
+      if (!user) return;
+
+      // 🔒 Verifica se há invitations pendentes para o email deste usuário.
+      // Compara em lowercase para garantir match mesmo se o email foi
+      // cadastrado com capitalização diferente do convite.
+      const normalizedEmail = user.email.toLowerCase();
+      const pendingInvitations = await this.prisma.invitation.findMany({
+        where: { email: normalizedEmail, status: 'pending' },
+        include: { tenant: { select: { name: true } } },
+      });
+
+      if (pendingInvitations.length > 0) {
+        for (const invitation of pendingInvitations) {
+          const role = await this.prisma.role.findFirst({
+            where: { tenantId: invitation.tenantId, name: invitation.roleName },
+            select: { id: true },
+          });
+          if (!role) {
+            this.logger.warn(
+              `Role ${invitation.roleName} não encontrada no tenant ` +
+                `${invitation.tenantId} para convite ${invitation.id} — pulando`,
+            );
+            continue;
+          }
+
+          try {
+            await this.prisma.$transaction([
+              this.prisma.tenantUser.create({
+                data: { tenantId: invitation.tenantId, userId, roleId: role.id },
+              }),
+              this.prisma.invitation.update({
+                where: { id: invitation.id },
+                data: { status: 'accepted' },
+              }),
+            ]);
+            this.logger.log(
+              `Convite ${invitation.id} aceito — usuário ${user.email} vinculado ` +
+                `ao tenant ${invitation.tenant.name} como ${invitation.roleName}`,
+            );
+          } catch (err) {
+            // P2002 = já é membro (edge case) — ignora e marca convite aceito.
+            if (err && typeof err === 'object' && 'code' in err && (err as { code: string }).code === 'P2002') {
+              await this.prisma.invitation.update({
+                where: { id: invitation.id },
+                data: { status: 'accepted' },
+              });
+              this.logger.warn(`Usuário já era membro — convite ${invitation.id} marcado como aceito`);
+            } else {
+              throw err;
+            }
+          }
+        }
+        return; // Não cria tenant próprio — entrou via convite.
+      }
+
+      // Sem convites pendentes — cria tenant próprio (fluxo original).
       const existingTenants = await this.prisma.tenantUser.findMany({
         where: { userId },
         select: { id: true },
@@ -156,13 +225,6 @@ export class EmailVerificationService {
       });
       if (existingTenants.length > 0) return;
 
-      const user = await this.prisma.user.findUnique({
-        where: { id: userId },
-        select: { name: true, email: true },
-      });
-      if (!user) return;
-
-      // Deriva o nome do tenant do nome do usuário (ex: "João Silva" → "João Silva")
       const tenantName = `${user.name}'s Workspace`;
       const slugBase = user.name
         .toLowerCase()
@@ -183,7 +245,7 @@ export class EmailVerificationService {
     } catch (err) {
       // Erro ao criar tenant não deve falhar a verificação de email.
       // O usuário pode criar via POST /tenants depois.
-      this.logger.error(`Falha ao auto-criar tenant para usuário ${userId}: ${(err as Error).message}`);
+      this.logger.error(`Falha ao processar tenant/convite para usuário ${userId}: ${(err as Error).message}`);
     }
   }
 

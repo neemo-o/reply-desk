@@ -74,8 +74,26 @@ export class TenantsController {
   @UseGuards(TenantGuard, RolesGuard)
   @Roles('owner', 'admin')
   @Post('members')
-  invite(@CurrentTenant() tenantId: string, @Body() dto: InviteUserDto) {
-    return this.tenantsService.inviteUser(tenantId, dto);
+  invite(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('sub') invitedBy: string,
+    @Body() dto: InviteUserDto,
+  ) {
+    return this.tenantsService.inviteUser(tenantId, dto, invitedBy);
+  }
+
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles('owner', 'admin')
+  @Get('invitations')
+  listInvitations(@CurrentTenant() tenantId: string) {
+    return this.tenantsService.listInvitations(tenantId);
+  }
+
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles('owner', 'admin')
+  @Delete('invitations/:id')
+  cancelInvitation(@CurrentTenant() tenantId: string, @Param('id') invitationId: string) {
+    return this.tenantsService.cancelInvitation(tenantId, invitationId);
   }
 
   @UseGuards(TenantGuard)
