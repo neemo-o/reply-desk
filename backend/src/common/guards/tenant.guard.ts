@@ -6,22 +6,26 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { isUuid } from '../utils/security';
+import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
+import { SKIP_SUBSCRIPTION_KEY } from '../decorators/skip-subscription.decorator';
 
 /**
  * ⚡ P2 — TenantGuard com cache de membership via Redis.
  *
- * Cada request autenticado roda `prisma.tenantUser.findFirst` para validar
- * o vínculo (user, tenant). Em 100 RPS isso vira 100 queries idênticas
- * para a maioria dos usuários.
+ * Agora global (APP_GUARD em AppModule), registrado ANTES do
+ * SubscriptionGuard. Popula request.tenantId + request.user.tenantId/role
+ * para que guards downstream (SubscriptionGuard) possam validar a
+ * assinatura do tenant.
  *
- * Cache aqui tem TTL de 60s:
- * - alterações em membership (incluir/excluir member) propagam em ≤ 60s
- * - chave inclui (userId, tenantId) → sem cross-tenant leak
+ * Rotas @Public() e @SkipSubscription() pulam a verificação de tenant
+ * (membership) — não há usuário autenticado ou a rota gerencia a própria
+ * assinatura. request.tenantId permanece undefined nesses casos.
  *
- * RedisService já tem retryStrategy; se cair, fail-open para Prisma direto.
+ * Cache Redis TTL 60s — alterações em membership propagam em ≤ 60s.
  */
 const CACHE_TTL_SEC = 60;
 
@@ -37,9 +41,24 @@ export class TenantGuard implements CanActivate {
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
+    private readonly reflector: Reflector,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    // @Public() routes — sem usuário, sem verificação de tenant
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (isPublic) return true;
+
+    // @SkipSubscription() routes — pulam membership (ex: gerir própria assinatura)
+    const skip = this.reflector.getAllAndOverride<boolean>(SKIP_SUBSCRIPTION_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (skip) return true;
+
     const request = context.switchToHttp().getRequest();
     const rawTenantId = request.headers['x-tenant-id'];
 

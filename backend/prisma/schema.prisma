@@ -204,7 +204,14 @@ model WhatsappSession {
   sessionName         String    @map("session_name")
   evolutionInstanceId String?   @map("evolution_instance_id")
   status              String    @default("disconnected")
-  qrCode              String?   @map("qr_code")
+  // 🔒 Não armazenamos QR Code nem credenciais do WhatsApp no banco — esses
+  // dados ficam no armazenamento persistente da própria Evolution API
+  // (volume Docker /evolution_data). O backend consulta `/instance/connect`
+  // para obter o QR atual sob demanda no endpoint GET /sessions/:id/qr.
+  // webhookSecretHash guarda o hash argon2 do secret gerado por sessão.
+  // Esse secret é enviado à Evolution como header customizado (`headers`)
+  // no webhook e usado para validar que o webhook recebido veio dela.
+  webhookSecretHash   String?   @map("webhook_secret_hash")
   lastSeen            DateTime? @map("last_seen")
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @updatedAt @map("updated_at")

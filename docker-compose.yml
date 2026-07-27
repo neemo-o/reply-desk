@@ -94,6 +94,96 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # ─── EVOLUTION API (WhatsApp externo) ──────────────────────────────
+  #
+  # 🔌 A Evolution API é o serviço EXTERNO responsável pela conexão e
+  # persistência das sessões do WhatsApp. As credenciais de autenticação
+  # ficam no volume /evolution_data — reinicializações do Docker NÃO
+  # destroem as sessões conectadas.
+  #
+  # O backend se comunica via EVOLUTION_API_URL=http://evolution-api:8080
+  # e configura webhooks para que todos os eventos (conexão, mensagens,
+  # status) cheguem ao endpoint público /api/v1/webhooks/evolution.
+  #
+  # Porta 8081 externa evita colisão com o frontend (8080) e com a porta
+  # interna da Evolution (8080, exposta só para debug).
+  evolution-api:
+    image: evoapicloud/evolution-api:latest
+    restart: unless-stopped
+    environment:
+          # Auth global — todas as chamadas externas ao backend (api) precisam
+          # deste token, enviado via header `apikey`. Backend lê via
+          # EVOLUTION_API_KEY.
+          AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:-replydesk-evolution-token-change-me}
+          # Expor instâncias na listagem (fetchInstances) — útil para debug.
+          AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES: "true"
+          SERVER_NAME: evolution
+          SERVER_TYPE: http
+          SERVER_PORT: 8080
+          SERVER_URL: http://0.0.0.0:8080
+          # 🛢️ Persistence: a Evolution usa Postgres (schema evolution_api).
+          # Usamos o mesmo Postgres do backend (host `postgres`, porta 5432).
+          DATABASE_PROVIDER: postgresql
+          DATABASE_CONNECTION_URI: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-whatsapp_saas}?schema=evolution_api
+          DATABASE_CONNECTION_CLIENT_NAME: evolution_exchange
+          # 🔒 Dados de instância, mensagens, contatos, chats salvos no DB
+          DATABASE_SAVE_DATA_INSTANCE: "true"
+          DATABASE_SAVE_DATA_NEW_MESSAGE: "true"
+          DATABASE_SAVE_MESSAGE_UPDATE: "true"
+          DATABASE_SAVE_DATA_CONTACTS: "true"
+          DATABASE_SAVE_DATA_CHATS: "true"
+          DATABASE_SAVE_DATA_LABELS: "true"
+          DATABASE_SAVE_DATA_HISTORIC: "true"
+          DATABASE_SAVE_IS_ON_WHATSAPP: "true"
+          DATABASE_SAVE_IS_ON_WHATSAPP_DAYS: "7"
+          DATABASE_DELETE_MESSAGE: "true"
+          # 🔴 Redis — Evolution usa CACHE_REDIS_URI para cache
+          CACHE_REDIS_ENABLED: "true"
+          CACHE_REDIS_URI: redis://redis:6379/6
+          CACHE_REDIS_PREFIX_KEY: "evolution"
+          CACHE_REDIS_TTL: "604800"
+          CACHE_REDIS_SAVE_INSTANCES: "false"
+          # CORS para permitir chamadas do backend
+          CORS_ORIGIN: "*"
+          CORS_METHODS: "GET,POST,PUT,DELETE"
+          CORS_CREDENTIALS: "true"
+          # Logs
+          LOG_LEVEL: "ERROR,WARN,INFO,LOG,WEBHOOKS,WEBSOCKET"
+          LOG_COLOR: "true"
+          LOG_BAILEYS: "error"
+          # Session client name
+          CONFIG_SESSION_PHONE_CLIENT: "ReplyDesk"
+          CONFIG_SESSION_PHONE_NAME: "ReplyDesk"
+          # Del instance behavior
+          DEL_INSTANCE: "false"
+          # Metrics
+          PROMETHEUS_METRICS: "false"
+          METRICS_AUTH_REQUIRED: "true"
+    volumes:
+      # 🛢️ A Evolution usa Postgres (schema evolution_api) — não precisa
+      # de volume dedicado para dados de sessão (que ficam no Postgres).
+      # Mantemos o volume caso a Evolution escreva arquivos de mídia/local
+      # em /evolution_data/instances/* (cache de mídia).
+      - evolution_data:/evolution_data
+    ports:
+      # 🔒 Em produção: pode-se omitir este mapping e deixar o serviço
+      # acessível apenas dentro da rede Docker (mais seguro). Aqui
+      # expondo 127.0.0.1:8081:8080 para inspeção/debug local.
+      - "127.0.0.1:${EVOLUTION_PORT:-8081}:8080"
+    healthcheck:
+      # Ping no endpoint /instance/fetchInstances com apikey esperado 401,
+      # mas indica que o servidor HTTP subiu. O test precisa aceitar qq código.
+      test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/manager/findInstances | grep -qE '^[1-5]'"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # ─── BACKEND (API + Worker) ────────────────────────────
 
   api:
@@ -114,6 +204,11 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       S3_ENDPOINT: http://minio:9000
+      # 🔌 Evolution API — URL interna do Docker (backend → evolution-api)
+      EVOLUTION_API_URL: http://evolution-api:8080
+      # 🔌 URL que a Evolution usará para chamar o backend de volta.
+      # Dentro do Docker, a Evolution alcança o backend pelo hostname `api`.
+      EVOLUTION_WEBHOOK_BASE_URL: http://api:3000
     ports:
       - "${PORT:-3000}:3000"
     depends_on:
@@ -123,6 +218,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      evolution-api:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:3000/api/v1/health || exit 1"]
       interval: 10s
@@ -149,11 +246,16 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       S3_ENDPOINT: http://minio:9000
+      # 🔌 Worker também precisa falar com a Evolution (jobs de connect-session)
+      EVOLUTION_API_URL: http://evolution-api:8080
+      EVOLUTION_WEBHOOK_BASE_URL: http://api:3000
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      evolution-api:
+        condition: service_started
     logging:
       driver: json-file
       options:
@@ -188,3 +290,4 @@ volumes:
   postgres_data:
   redis_data:
   minio_data:
+  evolution_data:

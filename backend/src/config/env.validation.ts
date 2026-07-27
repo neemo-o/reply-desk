@@ -77,6 +77,20 @@ class EnvironmentVariables {
   @Matches(/^https?:\/\//, { message: 'STRIPE_CHECKOUT_CANCEL_URL deve começar com http:// ou https://' })
   STRIPE_CHECKOUT_CANCEL_URL?: string;
 
+  // 🔒 Evolution API — integração WhatsApp (sessões são externas ao DB)
+  @IsOptional()
+  @IsString()
+  EVOLUTION_API_URL?: string;
+
+  @IsOptional()
+  @IsString()
+  EVOLUTION_API_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^https?:\/\//, { message: 'EVOLUTION_WEBHOOK_BASE_URL deve começar com http:// ou https://' })
+  EVOLUTION_WEBHOOK_BASE_URL?: string;
+
   // 🔒 SMTP — envio do OTP de verificação de e-mail
   @IsOptional()
   @IsString()

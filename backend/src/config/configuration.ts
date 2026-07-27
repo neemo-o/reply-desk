@@ -26,8 +26,16 @@ export default () => ({
     secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
   },
   evolution: {
+    // URL base da Evolution API (sem barra final). Em Docker, geralmente
+    // http://evolution-api:8080 (hostname do serviço no compose).
     url: process.env.EVOLUTION_API_URL,
+    // API key global configurada no container da Evolution (SERVER_TOKEN/
+    // GLOBAL_API_TOKEN). Enviada como header `apikey` em todas as chamadas.
     apiKey: process.env.EVOLUTION_API_KEY,
+    // URL pública do backend que a Evolution usará para chamar de volta o
+    // webhook. Em Docker: http://api:3000/api/v1/webhooks/evolution.
+    // Em produção precisa ser HTTPS e acessível pela Evolution.
+    webhookBaseUrl: process.env.EVOLUTION_WEBHOOK_BASE_URL,
   },
   stripe: {
     secretKey: process.env.STRIPE_SECRET_KEY,

@@ -9,7 +9,9 @@ import { PrismaModule } from './common/prisma/prisma.module';
 import { RedisModule } from './common/redis/redis.module';
 import { MailModule } from './common/mail/mail.module';
 import { LoggerModule } from './common/logger/logger.module';
+import { EvolutionModule } from './common/evolution/evolution.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
+import { TenantGuard } from './common/guards/tenant.guard';
 import { SubscriptionGuard } from './common/guards/subscription.guard';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
@@ -51,6 +53,7 @@ import { HealthModule } from './modules/health/health.module';
     PrismaModule,
     RedisModule,
     MailModule,
+    EvolutionModule,
     QueueModule,
     AuthModule,
     UsersModule,
@@ -66,6 +69,7 @@ import { HealthModule } from './modules/health/health.module';
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useClass: TenantGuard }, // 🔒 populata request.tenantId antes do SubscriptionGuard
     { provide: APP_GUARD, useClass: SubscriptionGuard }, // 🔒 M6 — global
     { provide: APP_FILTER, useClass: HttpExceptionFilter },
     { provide: APP_INTERCEPTOR, useClass: LoggingInterceptor },

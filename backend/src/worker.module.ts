@@ -6,6 +6,7 @@ import { validate } from './config/env.validation';
 import { PrismaModule } from './common/prisma/prisma.module';
 import { RedisModule } from './common/redis/redis.module';
 import { LoggerModule } from './common/logger/logger.module';
+import { EvolutionModule } from './common/evolution/evolution.module';
 import { QueueModule } from './modules/queue/queue.module';
 import { WhatsappSessionsModule } from './modules/whatsapp-sessions/whatsapp-sessions.module';
 import { ConversationsModule } from './modules/conversations/conversations.module';
@@ -36,6 +37,7 @@ import { SubscriptionsModule } from './modules/subscriptions/subscriptions.modul
     LoggerModule,
     PrismaModule,
     RedisModule,
+    EvolutionModule,
     QueueModule,
     SubscriptionsModule,   // resolve SubscriptionGuard → SubscriptionsService
     WhatsappSessionsModule, // contém WhatsappSessionsProcessor
