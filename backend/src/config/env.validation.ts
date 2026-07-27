@@ -91,6 +91,15 @@ class EnvironmentVariables {
   @Matches(/^https?:\/\//, { message: 'EVOLUTION_WEBHOOK_BASE_URL deve começar com http:// ou https://' })
   EVOLUTION_WEBHOOK_BASE_URL?: string;
 
+  // 🤖 Resposta automática placeholder (temporário)
+  @IsOptional()
+  @IsString()
+  EVO_PLACEHOLDER_OWNER_PHONE?: string;
+
+  @IsOptional()
+  @IsString()
+  EVO_PLACEHOLDER_TEXT?: string;
+
   // 🔒 SMTP — envio do OTP de verificação de e-mail
   @IsOptional()
   @IsString()

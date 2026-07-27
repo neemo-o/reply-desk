@@ -349,7 +349,7 @@ model Contact {
   conversations Conversation[]
   tagRelations  ContactTagRelation[]
 
-  @@index([tenantId, phone]) // DB-1: lookup por phone dentro do tenant
+  @@unique([tenantId, phone]) // lookup por phone dentro do tenant (upsert no webhook)
   @@index([phone]) // existente — mantido
   @@map("contacts")
 }

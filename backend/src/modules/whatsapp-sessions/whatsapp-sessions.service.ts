@@ -167,6 +167,47 @@ export class WhatsappSessionsService {
   }
 
   /**
+   * 🪵 Inbox temporário: lista as mensagens mais recentes recebidas/enviadas
+   * por ESTA sessão (em qualquer conversa do tenant). Útil para o front
+   * logar/visualizar o que está chegando sem precisar entrar em uma conversa
+   * específica. Ordena por timestamp desc; paginação cursor.
+   */
+  async findInbox(
+    tenantId: string,
+    sessionId: string,
+    opts: { take?: number; cursor?: string } = {},
+  ) {
+    if (!isUuid(sessionId)) throw new NotFoundException('Sessão não encontrada');
+    // Garante que a sessão pertence ao tenant
+    await this.findOne(tenantId, sessionId);
+    const take = Math.min(Math.max(opts.take ?? 50, 1), 200);
+    const where = {
+      conversation: { sessionId, tenantId },
+    } as const;
+    return this.prisma.message.findMany({
+      where,
+      orderBy: { timestamp: 'desc' },
+      take,
+      ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
+      select: {
+        id: true,
+        direction: true,
+        type: true,
+        content: true,
+        status: true,
+        timestamp: true,
+        conversation: {
+          select: {
+            id: true,
+            status: true,
+            contact: { select: { id: true, phone: true, name: true, avatar: true } },
+          },
+        },
+      },
+    });
+  }
+
+  /**
    * Lookup por sessionName — usado pelo webhook controller para identificar
    * a sessão a partir do payload da Evolution (`instance` field).
    * Não valida tenantId — é chamado pelo webhook público.

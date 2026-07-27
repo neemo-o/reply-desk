@@ -14,6 +14,7 @@ import {
   LayoutDashboard,
   Settings,
   Users,
+  Smartphone,
 } from "lucide-react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Logo } from "@/components/layout/logo";
@@ -37,6 +38,7 @@ import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { to: "/dashboard", label: "Visão geral", icon: LayoutDashboard, end: true },
+  { to: "/dashboard/whatsapp", label: "WhatsApp", icon: Smartphone, end: false },
 ] as const;
 
 const MANAGEMENT_ITEMS = [

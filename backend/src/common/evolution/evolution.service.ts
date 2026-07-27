@@ -253,6 +253,34 @@ export class EvolutionService {
     return this.call('GET', `/webhook/find/${encodeURIComponent(instanceName)}`);
   }
 
+  // ─── Envio de mensagens ────────────────────────────────────────────
+
+  /**
+   * Envia uma mensagem de texto via Evolution API.
+   * Endpoint: POST /message/sendText/{instance}
+   *
+   * Payload (Evolution API v2, integration WHATSAPP-BAILEYS):
+   *   {
+   *     number:  "5511999999999",        // E.164 sem +, sem @s.whatsapp.net
+   *     options: { delay: 1200, ... },
+   *     textMessage: { text: "..." }
+   *   }
+   *
+   * Retorno (típico): { key: { id, ... }, message: { ... }, status: "PENDING"|"SENT" }
+   */
+  async sendText(instanceName: string, input: {
+    number: string;
+    text: string;
+    delayMs?: number;
+  }): Promise<{ key?: { id?: string }; status?: string }> {
+    const payload = {
+      number: input.number,
+      options: { delay: input.delayMs ?? 1200 },
+      textMessage: { text: input.text },
+    };
+    return this.call('POST', `/message/sendText/${encodeURIComponent(instanceName)}`, payload);
+  }
+
   // ─── Helpers ──────────────────────────────────────────────────────
 
   /**

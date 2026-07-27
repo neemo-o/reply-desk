@@ -95,6 +95,23 @@ export class WhatsappSessionsController {
   }
 
   /**
+   * 🪵 Inbox temporário: últimas mensagens recebidas/enviadas nesta sessão.
+   * Endpoint principal consumido pela página `/dashboard/whatsapp` para
+   * o painel "log temporário de mensagens".
+   */
+  @Get(':id/inbox')
+  getInbox(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+    @Query() q: ListSessionsQuery,
+  ) {
+    return this.sessionsService.findInbox(tenantId, id, {
+      take: q.take,
+      cursor: q.cursor,
+    });
+  }
+
+  /**
    * Busca o QR Code atual na Evolution API. O QR é retornado em tempo real
    * e nunca persistido. O frontend polla este endpoint a cada 2-3s durante
    * o fluxo de conexão.

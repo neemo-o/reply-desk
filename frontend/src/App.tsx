@@ -11,6 +11,7 @@ import { PaymentCallbackPage } from "@/pages/onboarding/payment-callback-page";
 import { DashboardPage } from "@/pages/dashboard/dashboard-page";
 import { ProfilePage } from "@/pages/dashboard/profile-page";
 import { MembersPage } from "@/pages/dashboard/members-page";
+import { WhatsappPage } from "@/pages/dashboard/whatsapp-page";
 import { NotFoundPage } from "@/pages/not-found-page";
 
 export default function App() {
@@ -30,6 +31,7 @@ export default function App() {
 
         <Route element={<SubscriptionGate />}>
           <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/dashboard/whatsapp" element={<WhatsappPage />} />
           <Route path="/dashboard/profile" element={<ProfilePage />} />
           <Route path="/dashboard/members" element={<MembersPage />} />
         </Route>

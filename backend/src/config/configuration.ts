@@ -36,6 +36,16 @@ export default () => ({
     // webhook. Em Docker: http://api:3000/api/v1/webhooks/evolution.
     // Em produção precisa ser HTTPS e acessível pela Evolution.
     webhookBaseUrl: process.env.EVOLUTION_WEBHOOK_BASE_URL,
+    // 🤖 Resposta automática placeholder (temporário).
+    // Se EVO_PLACEHOLDER_OWNER_PHONE estiver definido, apenas mensagens vindas
+    // desse número recebem a resposta placeholder. Outros números são ignorados
+    // (apenas persistidas + logadas) — representa o teste "só responda se for eu".
+    // Se EVO_PLACEHOLDER_OWNER_PHONE estiver vazio, responde a TODOS os números
+    // (modo "qualquer número recebe placeholder").
+    placeholderOwnerPhone: process.env.EVO_PLACEHOLDER_OWNER_PHONE,
+    placeholderText:
+      process.env.EVO_PLACEHOLDER_TEXT ??
+      'Olá! Recebi sua mensagem. Em breve um atendente responderá. 🤖 ReplyDesk',
   },
   stripe: {
     secretKey: process.env.STRIPE_SECRET_KEY,
