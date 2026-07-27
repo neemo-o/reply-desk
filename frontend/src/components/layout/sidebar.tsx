@@ -38,7 +38,10 @@ import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { to: "/dashboard", label: "Visão geral", icon: LayoutDashboard, end: true },
-  { to: "/dashboard/whatsapp", label: "WhatsApp", icon: Smartphone, end: false },
+] as const;
+
+const ATTENDANCE_ITEMS = [
+  { to: "/dashboard/whatsapp", label: "Sessões", icon: Smartphone, end: false },
 ] as const;
 
 const MANAGEMENT_ITEMS = [
@@ -171,6 +174,32 @@ function SidebarContent({ onNavigate }: SidebarContentProps) {
       {/* Navigation */}
       <nav className="flex-1 space-y-1 px-3 py-4">
         {NAV_ITEMS.map((item) => {
+          const Icon = item.icon;
+          return (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              onClick={onNavigate}
+              className={({ isActive }) =>
+                cn(
+                  "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+                  isActive
+                    ? "bg-secondary text-foreground"
+                    : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+                )
+              }
+            >
+              <Icon className="h-4.5 w-4.5 shrink-0" />
+              {item.label}
+            </NavLink>
+          );
+        })}
+
+        <p className="px-3 pt-6 pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground/70">
+          Atendimento
+        </p>
+        {ATTENDANCE_ITEMS.map((item) => {
           const Icon = item.icon;
           return (
             <NavLink

@@ -211,6 +211,7 @@ export class AuthService {
           ? {
               status: sub.status,
               plan: sub.plan?.name,
+              maxSessions: sub.plan?.maxSessions ?? 0,
               isActive,
               trialUntil: sub.trialUntil,
               expiresAt: sub.expiresAt,

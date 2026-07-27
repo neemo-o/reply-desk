@@ -12,6 +12,8 @@ export type TenantRole = "owner" | "admin" | "agent";
 export interface TenantSubscriptionSummary {
   status: string;
   plan?: string;
+  /** Limite de sessões do WhatsApp do plano ativo (0 se sem plano). */
+  maxSessions: number;
   isActive: boolean;
   trialUntil?: string | null;
   expiresAt?: string | null;
