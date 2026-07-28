@@ -21,9 +21,21 @@ import { SKIP_SUBSCRIPTION_KEY } from '../decorators/skip-subscription.decorator
  * para que guards downstream (SubscriptionGuard) possam validar a
  * assinatura do tenant.
  *
- * Rotas @Public() e @SkipSubscription() pulam a verificação de tenant
- * (membership) — não há usuário autenticado ou a rota gerencia a própria
- * assinatura. request.tenantId permanece undefined nesses casos.
+ * Rotas @Public() pulam membership (não há usuário autenticado).
+ *
+ * 🔒 Rotas @SkipSubscription() NÃO pulam membership — apenas tornam o
+ * header x-tenant-id **opcional**. Se o header estiver presente, populamos
+ * role/tenantId normalmente (necessário para @Roles(...)) e o SubscriptionGuard
+ * depois pula a verificação de assinatura. Se o header NÃO estiver presente
+ * (ex: /auth/me antes de o usuário ter tenant), permitimos o fluxo sem popular
+ * nada — nenhuma rota @SkipSubscription() usa @Roles() nesse caminho.
+ *
+ * Bug histórico: antes o TenantGuard tratava @SkipSubscription() como
+ * "pular membership totalmente" — return true imediato. Combinado com
+ * @UseGuards(TenantGuard, RolesGuard) em SubscriptionsController e
+ * TenantsController, isso deixava request.user.role === undefined →
+ * RolesGuard sempre rejeitava com 403 "Permissão insuficiente para este
+ * recurso", mesmo para usuários legítimos com role 'owner'.
  *
  * Cache Redis TTL 60s — alterações em membership propagam em ≤ 60s.
  */
@@ -52,18 +64,28 @@ export class TenantGuard implements CanActivate {
     ]);
     if (isPublic) return true;
 
-    // @SkipSubscription() routes — pulam membership (ex: gerir própria assinatura)
-    const skip = this.reflector.getAllAndOverride<boolean>(SKIP_SUBSCRIPTION_KEY, [
+    // @SkipSubscription() routes — NÃO pulam membership; tornam o header
+    // x-tenant-id opcional. Sem header, deixamos o fluxo seguir sem popular
+    // role/tenantId (o SubscriptionGuard vai pular a verificação de assinatura
+    // de qualquer forma). Com header, populamos normalmente para que @Roles(...)
+    // funcione — ver comentário no topo do arquivo.
+    const skipSubscription = this.reflector.getAllAndOverride<boolean>(SKIP_SUBSCRIPTION_KEY, [
       context.getHandler(),
       context.getClass(),
     ]);
-    if (skip) return true;
 
     const request = context.switchToHttp().getRequest();
     const rawTenantId = request.headers['x-tenant-id'];
 
-    if (typeof rawTenantId !== 'string' || rawTenantId.trim() === '') {
+    // Sem header e rota exige membership (não é skip) — bloqueia.
+    const hasHeader = typeof rawTenantId === 'string' && rawTenantId.trim() !== '';
+    if (!hasHeader && !skipSubscription) {
       throw new BadRequestException('Header x-tenant-id é obrigatório');
+    }
+
+    // Sem header e rota @SkipSubscription() — segue sem popular nada.
+    if (!hasHeader) {
+      return true;
     }
 
     const tenantId = rawTenantId.trim();
