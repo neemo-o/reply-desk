@@ -3,9 +3,9 @@ import type {
   CreateSessionPayload,
   InboxMessage,
   QrCodeResponse,
+  SessionEvent,
   WhatsappSession,
 } from "@/types/whatsapp";
-
 /**
  * 📱 whatsappService — wrapper HTTP para /whatsapp/sessions.
  *
@@ -14,7 +14,8 @@ import type {
  *   POST   /whatsapp/sessions              criar (enfileira connect-session)
  *   GET    /whatsapp/sessions/:id          detalhe
  *   GET    /whatsapp/sessions/:id/qr       QR atual (nunca persistido)
- *   GET    /whatsapp/sessions/:id/inbox    🪵 inbox temporário (mensagens)
+ *   GET    /whatsapp/sessions/:id/inbox    🪵 inbox de mensagens
+ *   GET    /whatsapp/sessions/:id/logs     🪵 S23 — logs de conexão
  *   POST   /whatsapp/sessions/:id/reconnect
  *   POST   /whatsapp/sessions/:id/logout
  *   DELETE /whatsapp/sessions/:id          delete permanente
@@ -25,6 +26,9 @@ export const whatsappService = {
     return data;
   },
 
+  /**
+   * 🔒 S23 — `payload` agora só tem `name` (sem phone).
+   */
   async create(payload: CreateSessionPayload): Promise<WhatsappSession> {
     const { data } = await apiClient.post<WhatsappSession>(
       "/whatsapp/sessions",
@@ -50,6 +54,18 @@ export const whatsappService = {
   async getInbox(id: string, opts: { take?: number; cursor?: string } = {}): Promise<InboxMessage[]> {
     const { data } = await apiClient.get<InboxMessage[]>(
       `/whatsapp/sessions/${id}/inbox`,
+      { params: { take: opts.take, cursor: opts.cursor } },
+    );
+    return data;
+  },
+
+  /**
+   * 🪵 S23 — Logs de CONEXÃO da sessão (SessionEvent). Substitui o uso do
+   * inbox como "log temporário" na página de detalhes.
+   */
+  async getLogs(id: string, opts: { take?: number; cursor?: string } = {}): Promise<SessionEvent[]> {
+    const { data } = await apiClient.get<SessionEvent[]>(
+      `/whatsapp/sessions/${id}/logs`,
       { params: { take: opts.take, cursor: opts.cursor } },
     );
     return data;

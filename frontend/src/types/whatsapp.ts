@@ -1,6 +1,6 @@
 // 📱 Types compartilhados entre service, hooks e páginas de WhatsApp.
-// Espelham o retorno do controller /api/v1/whatsapp/sessions e do inbox
-// em /api/v1/whatsapp/sessions/:id/inbox.
+// Espelham o retorno do controller /api/v1/whatsapp/sessions e dos endpoints
+// de inbox/logs em /api/v1/whatsapp/sessions/:id/{inbox,logs}.
 
 export type SessionStatus =
   | "disconnected"
@@ -26,9 +26,22 @@ export interface WhatsappSession {
   } | null;
 }
 
-export interface CreateSessionPayload {
+/**
+ * 🔒 S23 — Versão "safe" retornada pelo backend para agentes (atendentes).
+ * Não tem dados sensíveis da Evolution (sessionName, evolutionInstanceId,
+ * nem phone). Só informa nome + status + última atividade.
+ */
+export interface WhatsappSessionSafe {
+  id: string;
   name: string;
-  phone?: string;
+  status: SessionStatus;
+  lastSeen?: string | null;
+  createdAt: string;
+}
+
+export interface CreateSessionPayload {
+  /** 🔒 S23 — `phone` removido: o número vem do webhook ao escanear o QR. */
+  name: string;
 }
 
 export interface QrCodeResponse {
@@ -65,4 +78,24 @@ export interface InboxMessage {
       avatar?: string | null;
     };
   };
+}
+
+// ─── S23 — Logs de CONEXÃO (SessionEvent) ───────────────────────────
+
+export type SessionEventType =
+  | "created"
+  | "qrcode_pending"
+  | "connected"
+  | "disconnected"
+  | "error"
+  | "logout"
+  | "deleted";
+
+export interface SessionEvent {
+  id: string;
+  type: SessionEventType;
+  statusCode?: number | null;
+  phone?: string | null;
+  message?: string | null;
+  createdAt: string;
 }

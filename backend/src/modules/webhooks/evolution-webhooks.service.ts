@@ -93,9 +93,13 @@ export class EvolutionWebhooksService {
         break;
       case 'QRCODE_UPDATED':
         // Não persistimos QR no banco — frontend busca sob demanda.
-        // Apenas descamos lastSeen.
+        // 🔒 S23 — Loga o evento (QR foi gerado/atualizado pela Evolution).
         await this.sessionsService.updateStatus(session.id, session.status, {
           lastSeen: new Date(),
+        });
+        await this.sessionsService.logEvent(session.id, session.tenantId, 'qrcode_pending', {
+          message: 'QR Code gerado pela Evolution',
+          metadata: raw.data as object,
         });
         break;
       case 'APPLICATION_STARTUP':
@@ -103,6 +107,9 @@ export class EvolutionWebhooksService {
         // lastSeen. Status de conexão virá em CONNECTION_UPDATE separado.
         await this.sessionsService.updateStatus(session.id, session.status, {
           lastSeen: new Date(),
+        });
+        await this.sessionsService.logEvent(session.id, session.tenantId, 'qrcode_pending', {
+          message: 'Instância reiniciada na Evolution (APPLICATION_STARTUP)',
         });
         break;
       case 'MESSAGES_UPSERT':
@@ -132,7 +139,9 @@ export class EvolutionWebhooksService {
 
   /**
    * CONNECTION_UPDATE — atualiza status da sessão refletindo a conexão
-   * real do WhatsApp na Evolution.
+   * real do WhatsApp na Evolution. Também registra um SessionEvent para
+   * cada transição (qrcode_pending, connected, disconnected) — esse é o
+   * "log de conexão" que aparece na página de detalhes da sessão.
    *
    * data pode conter:
    *   {
@@ -140,11 +149,16 @@ export class EvolutionWebhooksService {
    *     statusCode?: 401 | 440 | 408 | ...,
    *     disconnectionReasonCode?: 401,
    *     disconnectionObject?: { ... },
+   *     wid?: { user: '5511999999999', server: 's.whatsapp.net' },
+   *     // alguns fluxos trazem:
+   *     number?: '5511999999999',
+   *     user?: '5511999999999',
+   *     phoneNumber?: { id: '5511999999999', ... },
    *   }
    * Em alguns fluxos o estado é `status` em vez de `state` — aceitamos ambos.
    */
   private async onConnectionUpdate(
-    session: { id: string; sessionName: string },
+    session: { id: string; tenantId: string; sessionName: string; status: string },
     data: unknown,
   ) {
     if (typeof data !== 'object' || data === null) return;
@@ -152,10 +166,21 @@ export class EvolutionWebhooksService {
     const state = (d.state ?? d.status) as string | undefined;
     if (!state) return;
 
-    // phone: alguns fluxos trazem em data.wid.user ou data.user
+    // 🔒 S23 — Captura robusta do phone: a Evolution pode enviá-lo em vários
+    // formatos dependendo do build e do integration (Baileys, etc.):
+    //   - data.wid.user              (formato Baileys clássico)
+    //   - data.user                  (alguns builds)
+    //   - data.number                 (Evolution API v2 normalizado)
+    //   - data.phoneNumber.id        (formato alternativo)
+    // Não usamos data.id (esse é o event id, não o número).
+    const wid = d.wid as Record<string, unknown> | undefined;
+    const phoneNumber = d.phoneNumber as Record<string, unknown> | undefined;
     const phone =
-      ((d.wid as Record<string, unknown> | undefined)?.user as string | undefined) ??
-      (d.user as string | undefined);
+      (wid?.user as string | undefined) ??
+      (d.user as string | undefined) ??
+      (d.number as string | undefined) ??
+      (phoneNumber?.id as string | undefined) ??
+      (phoneNumber?.user as string | undefined);
 
     // 🔒 M20 — A Evolution expõe o motivo do disconnect em campos irmãos a `state`.
     // Quando o WhatsApp remove o dispositivo (ex.: você escaneou o QR em outro
@@ -169,36 +194,77 @@ export class EvolutionWebhooksService {
 
     switch (state.toLowerCase()) {
       case 'open':
-      case 'connected':
+      case 'connected': {
         await this.sessionsService.markConnected(session.id, phone);
         this.logger.log(`session ${session.id} → connected (phone=${phone ?? '-'})`);
         break;
+      }
       case 'close':
       case 'disconnected':
       case 'logging_out':
       case 'conflict':
       case 'device_removed':
-      case 'unpaired':
+      case 'unpaired': {
         // Qualquer estado terminal cai aqui — incluímos os códigos HTTP comuns
         // de disconnect do WhatsApp (401=conflict, 408=timeout, 440=gone).
         await this.sessionsService.updateStatus(session.id, 'disconnected');
+        const reason = this.describeDisconnectReason(state, statusCode);
+        await this.sessionsService.logEvent(session.id, session.tenantId, 'disconnected', {
+          statusCode,
+          phone,
+          message: reason,
+        });
         this.logger.warn(
           `session ${session.id} → disconnected ` +
           `(state=${state} phone=${phone ?? '-'} statusCode=${statusCode ?? '-'})`,
         );
         break;
+      }
       case 'connecting':
       case 'qr_screen':
-      case 'qr':
+      case 'qr': {
         await this.sessionsService.updateStatus(session.id, 'qrcode_pending');
+        await this.sessionsService.logEvent(session.id, session.tenantId, 'qrcode_pending', {
+          message: `Estado "${state}" — aguardando QR ser escaneado`,
+        });
         break;
-      default:
+      }
+      default: {
         // 🔒 M20 — Loga como `warn` (não `debug`) para diagnosticar fácil quando
         // a Evolution introduzir um novo estado que ainda não mapeamos.
         this.logger.warn(
           `session ${session.id}: CONNECTION_UPDATE state="${state}" (não mapeado)`,
         );
+        await this.sessionsService.logEvent(session.id, session.tenantId, 'error', {
+          statusCode,
+          message: `Estado de conexão não mapeado: "${state}"`,
+          metadata: data as object,
+        });
+      }
     }
+  }
+
+  /**
+   * 🔒 S23 — Traduz códigos HTTP/WhatsApp de disconnect em mensagens
+   * legíveis para o log de conexão. Mantém a lista de códigos conhecidos
+   * do Baileys/Evolution API:
+   *   401 = conflito (outro device conectou com o mesmo número)
+   *   402 = não autorizado
+   *   403 = banido
+   *   408 = timeout
+   *   410 = gone (sessão expirou)
+   *   428 = connection closed
+   *   440 = gone (logged out)
+   *   500 = erro interno
+   */
+  private describeDisconnectReason(state: string, statusCode?: number): string {
+    if (statusCode === 401) return `Desconectado (conflito: outro dispositivo conectou com o mesmo número) — state=${state}`;
+    if (statusCode === 402 || statusCode === 403) return `Desconectado (não autorizado/banido) — code=${statusCode}`;
+    if (statusCode === 408) return `Desconectado (timeout de conexão)`;
+    if (statusCode === 410 || statusCode === 440) return `Desconectado (sessão expirou/logout)`;
+    if (statusCode === 428) return `Desconectado (conexão fechada)`;
+    if (statusCode === 500) return `Desconectado (erro interno do WhatsApp)`;
+    return `Desconectado (state=${state}${statusCode ? `, code=${statusCode}` : ''})`;
   }
 
   /**

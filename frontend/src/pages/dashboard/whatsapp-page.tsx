@@ -7,13 +7,16 @@ import {
   RefreshCw,
   LogOut,
   Trash2,
-  Inbox,
-  ArrowDownLeft,
-  ArrowUpRight,
-  CircleDot,
+  Activity,
   ChevronRight,
   AlertTriangle,
   Hash,
+  ShieldCheck,
+  ShieldAlert,
+  CircleCheck,
+  CircleX,
+  Clock,
+  Info,
 } from "lucide-react";
 import { DashboardLayout } from "@/layouts/dashboard-layout";
 import { Card, CardContent } from "@/components/ui/card";
@@ -55,10 +58,15 @@ import {
   useReconnectSession,
   useLogoutSession,
   useDeleteSession,
-  useWhatsappInbox,
+  useSessionLogs,
 } from "@/hooks/use-whatsapp";
 import { whatsappService } from "@/services/whatsapp-service";
-import type { InboxMessage, SessionStatus, WhatsappSession } from "@/types/whatsapp";
+import type {
+  SessionEvent,
+  SessionEventType,
+  SessionStatus,
+  WhatsappSession,
+} from "@/types/whatsapp";
 import { useAuth } from "@/contexts/auth-provider";
 import { cn } from "@/lib/utils";
 
@@ -88,23 +96,57 @@ function StatusDot({ status }: { status: SessionStatus }) {
   return <span className={cn("inline-block h-2 w-2 rounded-full", color)} aria-hidden />;
 }
 
-/** Conta sessões "ativas" — tudo exceto desconectadas (mesmo critério do backend). */
-function countActiveSessions(sessions: WhatsappSession[] | undefined): number {
-  if (!sessions) return 0;
-  return sessions.filter((s) => s.status !== "disconnected").length;
+/** Conta sessões totais do tenant — 🔒 S23: limite agora conta TODAS, não
+ *  apenas conectadas. */
+function countTotalSessions(sessions: WhatsappSession[] | undefined): number {
+  return sessions?.length ?? 0;
 }
+
+// Tradução legível dos tipos de evento de log de conexão.
+const EVENT_LABEL: Record<SessionEventType, string> = {
+  created: "Sessão criada",
+  qrcode_pending: "QR Code gerado",
+  connected: "Conectado",
+  disconnected: "Desconectado",
+  error: "Erro",
+  logout: "Desconectado (manual)",
+  deleted: "Sessão excluída",
+};
+
+const EVENT_ICON: Record<SessionEventType, typeof CircleCheck> = {
+  created: Plus,
+  qrcode_pending: QrCode,
+  connected: CircleCheck,
+  disconnected: CircleX,
+  error: AlertTriangle,
+  logout: LogOut,
+  deleted: Trash2,
+};
+
+const EVENT_COLOR: Record<SessionEventType, string> = {
+  created: "text-sky-600 dark:text-sky-400",
+  qrcode_pending: "text-amber-600 dark:text-amber-400",
+  connected: "text-emerald-600 dark:text-emerald-400",
+  disconnected: "text-zinc-500",
+  error: "text-red-600 dark:text-red-400",
+  logout: "text-orange-600 dark:text-orange-400",
+  deleted: "text-zinc-500",
+};
 
 // ─── página principal ───────────────────────────────────────────────
 
 export function WhatsappPage() {
   const { data: sessions, isLoading } = useWhatsappSessions();
-  const { tenant } = useAuth();
+  const { role, tenant } = useAuth();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
 
+  // 🔒 S23 — owner/admin vê tudo. agent só vê lista safe (status running/not running).
+  const isManager = role === "owner" || role === "admin";
+
   const maxSessions = tenant?.subscription?.maxSessions ?? 0;
-  const activeCount = countActiveSessions(sessions);
-  const atLimit = maxSessions > 0 && activeCount >= maxSessions;
+  const totalCount = countTotalSessions(sessions);
+  const atLimit = maxSessions > 0 && totalCount >= maxSessions;
 
   // Quando a lista recarrega, se a sessão selecionada sumiu (foi deletada),
   // fechamos o sheet. Não auto-selecionamos nenhuma — a tabela é clicável.
@@ -116,7 +158,7 @@ export function WhatsappPage() {
   }, [sessions, selectedId]);
 
   const selected = useMemo(
-    () => (sessions ? sessions.find((s) => s.id === selectedId) ?? null : null),
+    () => (sessions ? (sessions as WhatsappSession[]).find((s) => s.id === selectedId) ?? null : null) as WhatsappSession | null,
     [sessions, selectedId],
   );
 
@@ -134,25 +176,40 @@ export function WhatsappPage() {
             Sessões
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Conecte e monitore suas sessões do Whatsapp em tempo real
+            {isManager
+              ? "Conecte, monitore e gerencie suas sessões do WhatsApp em tempo real."
+              : "Acompanhe o status das sessões de WhatsApp em uso pela sua equipe."}
           </p>
         </div>
         <div className="flex items-center gap-3">
           <SessionLimitBadge
-            active={activeCount}
+            total={totalCount}
             max={maxSessions}
             isLoading={isLoading}
           />
-          <CreateSessionDialog
-            disabled={atLimit}
-            disabledReason={
-              atLimit && maxSessions > 0
-                ? `Limite do plano atingido (${activeCount}/${maxSessions}). Faça upgrade para criar mais sessões.`
-                : undefined
-            }
-          />
+          {isManager && (
+            <CreateSessionDialog
+              disabled={atLimit}
+              disabledReason={
+                atLimit && maxSessions > 0
+                  ? `Limite do plano atingido (${totalCount}/${maxSessions}). Exclua uma sessão ou faça upgrade para criar mais.`
+                  : undefined
+              }
+            />
+          )}
         </div>
       </div>
+
+      {/* 🪧 Aviso para agentes: somente leitura */}
+      {!isManager && (
+        <div className="mb-4 flex items-start gap-2 rounded-lg border border-sky-300/50 bg-sky-50/50 p-3 text-sm text-sky-900 dark:border-sky-800/50 dark:bg-sky-950/30 dark:text-sky-200">
+          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            Você é <strong>atendente</strong>. Apenas visualize o status das sessões — criar,
+            reconectar ou excluir é restrito a <strong>donos e administradores</strong>.
+          </span>
+        </div>
+      )}
 
       {/* Tabela de sessões */}
       <Card className="overflow-hidden p-0">
@@ -167,7 +224,9 @@ export function WhatsappPage() {
             <Smartphone className="h-8 w-8 text-muted-foreground/60" />
             <p className="text-sm font-medium">Nenhuma sessão ainda</p>
             <p className="max-w-[20rem] text-xs text-muted-foreground">
-              Crie uma sessão para conectar um número do WhatsApp e começar a receber mensagens.
+              {isManager
+                ? "Crie uma sessão para conectar um número do WhatsApp e começar a receber mensagens."
+                : "Nenhuma sessão de WhatsApp configurada para este tenant."}
             </p>
           </CardContent>
         ) : (
@@ -175,19 +234,20 @@ export function WhatsappPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Nome da sessão</TableHead>
-                <TableHead>Número / Contato</TableHead>
-                <TableHead>ID da sessão</TableHead>
+                {/* 🔒 S23 — phone só é relevante para owner/admin (agentes não vêem) */}
+                {isManager && <TableHead>Número conectado</TableHead>}
                 <TableHead className="w-[160px]">Status</TableHead>
                 <TableHead className="w-[40px]" />
               </TableRow>
             </TableHeader>
             <TableBody>
-              {sessions.map((s) => (
+              {(sessions as WhatsappSession[]).map((s) => (
                 <SessionTableRow
                   key={s.id}
                   session={s}
                   active={s.id === selectedId && sheetOpen}
                   onClick={() => openRow(s.id)}
+                  showSensitive={isManager}
                 />
               ))}
             </TableBody>
@@ -205,7 +265,7 @@ export function WhatsappPage() {
       >
         <SheetContent side="right" className="flex flex-col gap-0 p-0">
           {selected ? (
-            <SessionDetail session={selected} />
+            <SessionDetail session={selected} canManage={isManager} />
           ) : (
             <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
               Nenhuma sessão selecionada.
@@ -220,11 +280,11 @@ export function WhatsappPage() {
 // ─── badge de limite (x / max) ──────────────────────────────────────
 
 function SessionLimitBadge({
-  active,
+  total,
   max,
   isLoading,
 }: {
-  active: number;
+  total: number;
   max: number;
   isLoading: boolean;
 }) {
@@ -235,20 +295,20 @@ function SessionLimitBadge({
     // Sem plano/limite conhecido — não exibe nada para não confundir.
     return null;
   }
-  const atLimit = active >= max;
+  const atLimit = total >= max;
   return (
     <Badge
       variant={atLimit ? "warning" : "outline"}
       className="h-8 gap-1.5 px-3 text-xs font-medium"
       title={
         atLimit
-          ? "Limite do plano atingido — faça upgrade para criar mais sessões"
-          : `${active} de ${max} sessões ativas no plano`
+          ? "Limite do plano atingido — exclua uma sessão ou faça upgrade para criar mais"
+          : `${total} de ${max} sessões criadas no plano`
       }
     >
       <Hash className="h-3.5 w-3.5" />
       <span className="tabular-nums">
-        {active}/{max}
+        {total}/{max}
       </span>{" "}
       sessões
     </Badge>
@@ -261,31 +321,29 @@ function SessionTableRow({
   session,
   active,
   onClick,
+  showSensitive,
 }: {
   session: WhatsappSession;
   active: boolean;
   onClick: () => void;
+  showSensitive: boolean;
 }) {
   return (
     <TableRow
       onClick={onClick}
       data-state={active ? "selected" : undefined}
-      className={cn(
-        "cursor-pointer",
-        active && "bg-secondary/60",
-      )}
+      className={cn("cursor-pointer", active && "bg-secondary/60")}
     >
       <TableCell className="font-medium">{session.name}</TableCell>
-      <TableCell className="text-muted-foreground">
-        {session.phone ? (
-          <span className="font-mono text-xs">{formatPhone(session.phone)}</span>
-        ) : (
-          <span className="text-muted-foreground/60">— sem número</span>
-        )}
-      </TableCell>
-      <TableCell>
-        <span className="font-mono text-[11px] text-muted-foreground">{session.sessionName}</span>
-      </TableCell>
+      {showSensitive && (
+        <TableCell className="text-muted-foreground">
+          {session.phone ? (
+            <span className="font-mono text-xs">{formatPhone(session.phone)}</span>
+          ) : (
+            <span className="text-muted-foreground/60">— sem número</span>
+          )}
+        </TableCell>
+      )}
       <TableCell>
         <Badge variant={STATUS_BADGE[session.status]} className="gap-1.5">
           <StatusDot status={session.status} />
@@ -318,28 +376,54 @@ function formatPhone(phone: string): string {
   return phone;
 }
 
-// ─── detalhe da sessão (QR + ações + inbox) dentro do Sheet ─────────
+// ─── detalhe da sessão (QR + ações + logs de conexão) dentro do Sheet ─
 
-function SessionDetail({ session }: { session: WhatsappSession }) {
-  // Polling do QR só quando a sessão está aguardando QR ou conectando.
-  const needsQr =
-    session.status === "qrcode_pending" || session.status === "connecting";
-  const [qr, setQr] = useState<{ connected: boolean; qrcode?: string; code?: string } | null>(null);
+function SessionDetail({
+  session,
+  canManage,
+}: {
+  session: WhatsappSession;
+  canManage: boolean;
+}) {
+  // 🔒 S23 — Polling do QR só quando:
+  //  - usuário é owner/admin (agentes não precisam de QR)
+  //  - sessão está aguardando QR ou conectando
+  const needsQr = canManage && (session.status === "qrcode_pending" || session.status === "connecting");
+  const [qrState, setQrState] = useState<{
+    connected: boolean;
+    qrcode?: string;
+    code?: string;
+    pairingCode?: string;
+  } | null>(null);
+  // 🔒 S23 — Countdown de regeneração do QR Code. A Evolution regenera
+  // o QR aproximadamente a cada 60s. Mostramos um contador regressivo
+  // para o usuário saber quando o QR atual vai expirar.
+  const [qrSecondsLeft, setQrSecondsLeft] = useState(60);
 
   useEffect(() => {
-    setQr(null);
+    setQrState(null);
+    setQrSecondsLeft(60);
     if (!needsQr) return;
     let cancelled = false;
+    let lastQrBase: string | undefined;
     const poll = async () => {
       while (!cancelled && needsQr) {
         try {
           const data = await whatsappService.getQr(session.id);
-          if (!cancelled) setQr(data);
+          if (cancelled) break;
+          setQrState(data);
+          // Reset countdown ao detectar QR novo
+          if (data.qrcode && data.qrcode !== lastQrBase) {
+            lastQrBase = data.qrcode;
+            setQrSecondsLeft(60);
+          }
           if (data.connected) break;
         } catch {
-          /* silent — retry no próximo tick */
+          // silent — retry no próximo tick
         }
-        await new Promise((r) => setTimeout(r, 2500));
+        // Aguarda 2s entre polls. Cada poll decrementa o countdown.
+        await new Promise((r) => setTimeout(r, 2000));
+        setQrSecondsLeft((s) => Math.max(0, s - 2));
       }
     };
     void poll();
@@ -363,7 +447,9 @@ function SessionDetail({ session }: { session: WhatsappSession }) {
           </Badge>
         </SheetTitle>
         <SheetDescription>
-          Detalhes e ações da sessão conectada via Evolution API.
+          {canManage
+            ? "Detalhes e ações da sessão conectada via Evolution API."
+            : "Status e última atividade da sessão."}
         </SheetDescription>
       </SheetHeader>
 
@@ -372,16 +458,21 @@ function SessionDetail({ session }: { session: WhatsappSession }) {
         {/* Bloco de informações detalhadas */}
         <div className="space-y-3 rounded-lg border border-border bg-secondary/30 p-4">
           <DetailRow label="Nome de exibição" value={session.name} />
-          <DetailRow
-            label="Número conectado"
-            value={session.phone ? formatPhone(session.phone) : "— sem número"}
-          />
-          <DetailRow
-            label="ID da sessão"
-            value={session.sessionName}
-            mono
-            hint="Identificador único da instância na Evolution API"
-          />
+          {/* 🔒 S23 — phone visível só para owner/admin */}
+          {canManage && (
+            <DetailRow
+              label="Número conectado"
+              value={session.phone ? formatPhone(session.phone) : "— ainda não conectado"}
+            />
+          )}
+          {canManage && (
+            <DetailRow
+              label="ID da sessão"
+              value={session.sessionName}
+              mono
+              hint="Identificador único da instância na Evolution API"
+            />
+          )}
           <DetailRow
             label="Última atividade"
             value={
@@ -407,27 +498,47 @@ function SessionDetail({ session }: { session: WhatsappSession }) {
           />
         </div>
 
-        {/* QR Code — só quando precisa */}
+        {/* QR Code — só quando owner/admin E precisa */}
         {needsQr && (
           <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border p-6">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <QrCode className="h-4 w-4" />
               Escaneie o QR Code com o WhatsApp para conectar
             </div>
-            {qr?.connected ? (
+
+            {qrState?.connected ? (
               <div className="flex items-center gap-2 text-sm font-medium text-emerald-600 dark:text-emerald-400">
-                <CircleDot className="h-4 w-4" /> Sessão conectada!
+                <CircleCheck className="h-4 w-4" /> Sessão conectada!
               </div>
-            ) : qr?.qrcode ? (
-              <img
-                src={qr.qrcode.startsWith("data:") ? qr.qrcode : `data:image/png;base64,${qr.qrcode}`}
-                alt="QR Code do WhatsApp"
-                className="h-56 w-56 rounded-lg border border-border bg-white p-2"
-              />
-            ) : qr?.code ? (
+            ) : qrState?.qrcode ? (
+              <>
+                <img
+                  src={
+                    qrState.qrcode.startsWith("data:")
+                      ? qrState.qrcode
+                      : `data:image/png;base64,${qrState.qrcode}`
+                  }
+                  alt="QR Code do WhatsApp"
+                  className="h-56 w-56 rounded-lg border border-border bg-white p-2"
+                />
+                {/* 🔒 S23 — Countdown de regeneração do QR */}
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Clock className="h-3.5 w-3.5" />
+                  <span className={cn("tabular-nums", qrSecondsLeft <= 10 && "text-amber-600 dark:text-amber-400")}>
+                    QR renova em {qrSecondsLeft}s
+                  </span>
+                </div>
+                {qrState.pairingCode && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Ou use o código de pareamento:{" "}
+                    <span className="font-mono font-semibold">{qrState.pairingCode}</span>
+                  </p>
+                )}
+              </>
+            ) : qrState?.code ? (
               <div className="rounded-lg border border-border bg-background p-4 text-center">
                 <p className="text-xs text-muted-foreground">Código de pareamento</p>
-                <p className="font-mono text-lg font-semibold">{qr.code}</p>
+                <p className="font-mono text-lg font-semibold">{qrState.code}</p>
               </div>
             ) : (
               <div className="flex h-56 w-56 items-center justify-center">
@@ -435,70 +546,57 @@ function SessionDetail({ session }: { session: WhatsappSession }) {
               </div>
             )}
             <p className="text-xs text-muted-foreground">
-              O QR é atualizado automaticamente a cada poucos segundos.
+              O QR é buscado em tempo real na Evolution API e nunca é persistido no banco.
             </p>
           </div>
         )}
 
-        {/* Inbox temporário (log de mensagens) */}
-        <InboxPanel sessionId={session.id} />
+        {/* 🪵 S23 — Logs de CONEXÃO (substitui o inbox de mensagens) */}
+        {canManage && <ConnectionLogsPanel sessionId={session.id} />}
+
+        {/* 📋 Aviso para agente: sem permissão de ação */}
+        {!canManage && (
+          <div className="flex items-start gap-2 rounded-lg border border-border bg-secondary/20 p-4 text-sm text-muted-foreground">
+            <Info className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              Você é atendente — apenas visualize o status. Para gerenciar
+              (conectar, reconectar, excluir), peça ao dono ou admin.
+            </span>
+          </div>
+        )}
       </div>
 
-      {/* Rodapé: ações */}
-      <SheetFooter className="flex-row flex-wrap gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => reconnect.mutate(session.id)}
-          disabled={reconnect.isPending}
-        >
-          <RefreshCw className={cn("h-4 w-4", reconnect.isPending && "animate-spin")} />
-          Reconectar
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => logout.mutate(session.id)}
-          disabled={logout.isPending || session.status === "disconnected"}
-        >
-          <LogOut className="h-4 w-4" />
-          Desconectar
-        </Button>
-        <ConnectButton sessionId={session.id} sessionName={session.name} status={session.status} />
-        <DeleteSessionDialog
-          sessionName={session.name}
-          onConfirm={() => del.mutate(session.id)}
-          isRemoving={del.isPending}
-        />
-      </SheetFooter>
+      {/* Rodapé: ações (🔒 S23 — só owner/admin) */}
+      {canManage && (
+        <SheetFooter className="flex-row flex-wrap gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => reconnect.mutate(session.id)}
+            disabled={reconnect.isPending || session.status === "connected"}
+            title="Reconectar — gera um QR Code novo"
+          >
+            <RefreshCw className={cn("h-4 w-4", reconnect.isPending && "animate-spin")} />
+            Reconectar
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => logout.mutate(session.id)}
+            disabled={logout.isPending || session.status === "qrcode_pending" || session.status === "connecting"}
+            title="Desconectar — reseta a sessão e mostra QR Code novo (para trocar de número)"
+          >
+            <LogOut className="h-4 w-4" />
+            Desconectar
+          </Button>
+          <DeleteSessionDialog
+            sessionName={session.name}
+            onConfirm={() => del.mutate(session.id)}
+            isRemoving={del.isPending}
+          />
+        </SheetFooter>
+      )}
     </>
-  );
-}
-
-/** Botão "Conectar" — só relevante quando desconectada; força novo poll de QR. */
-function ConnectButton({
-  sessionId,
-  sessionName,
-  status,
-}: {
-  sessionId: string;
-  sessionName: string;
-  status: SessionStatus;
-}) {
-  // Conectar == reconectar no endpoint atual. Mantemos rótulo distinto por clareza.
-  const reconnect = useReconnectSession();
-  const isConnecting = status === "connecting" || status === "qrcode_pending";
-  return (
-    <Button
-      variant="default"
-      size="sm"
-      onClick={() => reconnect.mutate(sessionId)}
-      disabled={reconnect.isPending || status === "connected" || isConnecting}
-      title={status === "connected" ? "Já conectada" : `Iniciar conexão de ${sessionName}`}
-    >
-      <Plus className="h-4 w-4" />
-      Conectar
-    </Button>
   );
 }
 
@@ -526,89 +624,76 @@ function DetailRow({
   );
 }
 
-// ─── inbox temporário ───────────────────────────────────────────────
+// ─── 🪵 S23 — Painel de logs de CONEXÃO (substitui o InboxPanel) ────
 
-function InboxPanel({ sessionId }: { sessionId: string }) {
-  const { data: messages, isLoading } = useWhatsappInbox(sessionId);
+function ConnectionLogsPanel({ sessionId }: { sessionId: string }) {
+  const { data: events, isLoading } = useSessionLogs(sessionId);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll para o topo quando novas mensagens chegam (estão em ordem desc).
+  // Auto-scroll para o topo quando novos eventos chegam (estão em ordem desc).
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
-  }, [messages]);
+  }, [events]);
 
   return (
     <div>
       <div className="mb-2 flex items-center gap-2">
-        <Inbox className="h-4 w-4 text-muted-foreground" />
-        <h3 className="text-sm font-semibold">Caixa de entrada (log temporário)</h3>
+        <Activity className="h-4 w-4 text-muted-foreground" />
+        <h3 className="text-sm font-semibold">Logs de conexão</h3>
       </div>
       <p className="mb-3 text-xs text-muted-foreground">
-        últimas {(messages ?? []).length} mensagens recebidas/enviadas · atualiza a cada 3s
+        histórico de status e eventos de conexão da sessão · atualiza a cada 3s
       </p>
-      <div ref={scrollRef} className="max-h-[320px] space-y-2 overflow-y-auto">
+      <div ref={scrollRef} className="max-h-[360px] space-y-2 overflow-y-auto pr-1">
         {isLoading ? (
           <div className="space-y-2">
             <Skeleton className="h-16 w-full" />
             <Skeleton className="h-16 w-full" />
             <Skeleton className="h-16 w-full" />
           </div>
-        ) : !messages || messages.length === 0 ? (
+        ) : !events || events.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">
-            Nenhuma mensagem recebida ainda. Conecte a sessão e envie uma mensagem de teste.
+            Nenhum evento de conexão registrado ainda.
           </p>
         ) : (
-          messages.map((m) => <InboxRow key={m.id} message={m} />)
+          events.map((ev) => <ConnectionLogRow key={ev.id} event={ev} />)
         )}
       </div>
     </div>
   );
 }
 
-function InboxRow({ message }: { message: InboxMessage }) {
-  const isOutbound = message.direction === "outbound";
-  const Icon = isOutbound ? ArrowUpRight : ArrowDownLeft;
-  const time = new Date(message.timestamp).toLocaleString("pt-BR", {
+function ConnectionLogRow({ event }: { event: SessionEvent }) {
+  const Icon = EVENT_ICON[event.type] ?? Info;
+  const time = new Date(event.createdAt).toLocaleString("pt-BR", {
     day: "2-digit",
     month: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
   });
-  const contactName = message.conversation.contact.name ?? message.conversation.contact.phone;
   return (
-    <div
-      className={cn(
-        "flex items-start gap-3 rounded-lg border p-3",
-        isOutbound ? "border-primary/20 bg-primary/5" : "border-border bg-card",
-      )}
-    >
-      <div
-        className={cn(
-          "mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full",
-          isOutbound
-            ? "bg-primary/15 text-primary"
-            : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
-        )}
-      >
+    <div className="flex items-start gap-3 rounded-lg border border-border bg-card p-3">
+      <div className={cn("mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-secondary", EVENT_COLOR[event.type])}>
         <Icon className="h-3.5 w-3.5" />
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <p className="truncate text-sm font-medium">{contactName}</p>
+          <p className="truncate text-sm font-medium">{EVENT_LABEL[event.type] ?? event.type}</p>
           <time className="shrink-0 text-[11px] text-muted-foreground tabular-nums">{time}</time>
         </div>
-        <p className="mt-1 break-words text-sm text-foreground/90">
-          {message.content ?? `[${message.type}]`}
-        </p>
+        {event.message && (
+          <p className="mt-1 break-words text-sm text-foreground/90">{event.message}</p>
+        )}
         <div className="mt-1.5 flex items-center gap-2 text-[11px] text-muted-foreground">
-          <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
-            {isOutbound ? "enviada" : "recebida"}
-          </Badge>
-          {message.status !== "delivered" && message.status !== "sent" && (
-            <span className="text-amber-600 dark:text-amber-400">{message.status}</span>
+          {event.statusCode != null && (
+            <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+              code {event.statusCode}
+            </Badge>
           )}
-          <span className="font-mono text-[10px]">{message.conversation.contact.phone}</span>
+          {event.phone && (
+            <span className="font-mono text-[10px]">número {formatPhone(event.phone)}</span>
+          )}
         </div>
       </div>
     </div>
@@ -627,14 +712,13 @@ function CreateSessionDialog({
   const create = useCreateWhatsappSession();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     try {
-      await create.mutateAsync({ name, phone: phone || undefined });
+      // 🔒 S23 — só enviamos `name`; o phone vem automaticamente do webhook
+      await create.mutateAsync({ name });
       setName("");
-      setPhone("");
       setOpen(false);
     } catch {
       /* toast já tratado no hook */
@@ -658,7 +742,9 @@ function CreateSessionDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Nova sessão WhatsApp</AlertDialogTitle>
           <AlertDialogDescription>
-            Crie a sessão na Evolution API. Após criar, escaneie o QR Code para conectar o número.
+            Crie a sessão na Evolution API. Após criar, escaneie o QR Code para
+            conectar o número — o telefone é detectado automaticamente do celular
+            que escanear.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <form onSubmit={onSubmit} className="space-y-4">
@@ -672,24 +758,18 @@ function CreateSessionDialog({
               maxLength={80}
               required
             />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="session-phone">
-              Número (opcional){" "}
-              <span className="text-xs font-normal text-muted-foreground">
-                — E.164, ex.: 5511999999999
-              </span>
-            </Label>
-            <Input
-              id="session-phone"
-              placeholder="5511999999999"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))}
-              inputMode="tel"
-            />
             <p className="text-xs text-muted-foreground">
-              Pré-configurado na Evolution para pareamento por código. Você ainda pode escanear o QR.
+              Dica: dê um nome que identifique o uso desta sessão (ex.: “Suporte”, “Vendas”).
             </p>
+          </div>
+          {/* 🔒 S23 — Campo de telefone removido. O número é detectado
+              automaticamente do celular que escanear o QR Code. */}
+          <div className="flex items-start gap-2 rounded-md border border-sky-300/40 bg-sky-50/50 p-3 text-xs text-sky-900 dark:border-sky-800/40 dark:bg-sky-950/30 dark:text-sky-200">
+            <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              O número do WhatsApp conectado será capturado automaticamente
+              quando o celular escanear o QR Code — não é preciso informá-lo aqui.
+            </span>
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
@@ -740,7 +820,8 @@ function DeleteSessionDialog({
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
             As conversas e mensagens associadas também serão removidas (cascade). Exporte
-            dados relevantes antes de prosseguir.
+            dados relevantes antes de prosseguir. Lembre-se: o limite de sessões do plano
+            conta o TOTAL criado — excluir libera espaço para criar uma nova.
           </span>
         </div>
         <AlertDialogFooter>

@@ -37,20 +37,26 @@ export class PlanLimitsService {
 
   /**
    * Verifica se o tenant pode criar uma nova WhatsappSession.
-   * Compara sessions ativas (não disconnected/deleted) com maxSessions do plano.
+   *
+   * 🔒 S23 — O limite maxSessions agora conta o TOTAL de sessões criadas
+   * pelo tenant (não apenas as "ativas" status != disconnected). Assim um
+   * Basic (maxSessions=1) só pode ter 1 sessão no total — conectada ou
+   * desconectada — e precisa excluir para criar outra. Antes o usuário
+   * conseguia criar infinitas sessões (só contava as conectadas), o que
+   * violava a intenção do limite por plano.
    */
   async assertCanCreateSession(tenantId: string): Promise<void> {
     const plan = await this.getActivePlan(tenantId);
     if (!plan) return; // sem assinatura = SubscriptionGuard já bloqueou
 
-    const activeSessions = await this.prisma.whatsappSession.count({
-      where: { tenantId, status: { notIn: ['disconnected'] } },
+    const totalSessions = await this.prisma.whatsappSession.count({
+      where: { tenantId },
     });
 
-    if (activeSessions >= plan.maxSessions) {
+    if (totalSessions >= plan.maxSessions) {
       throw new ForbiddenException(
         `Limite de sessões do plano ${plan.name} atingido (${plan.maxSessions}). ` +
-          `Faça upgrade do plano para adicionar mais sessões.`,
+          `Exclua uma sessão existente ou faça upgrade do plano para criar mais sessões.`,
       );
     }
   }
@@ -107,10 +113,10 @@ export class PlanLimitsService {
     });
     if (!newPlan) throw new BadRequestException('Plano não encontrado');
 
-    // Conta recursos ativos
-    const [activeSessions, botCount, userCount] = await Promise.all([
+    // Conta recursos (🔒 S23: sessões = total criadas, não só ativas)
+    const [totalSessions, botCount, userCount] = await Promise.all([
       this.prisma.whatsappSession.count({
-        where: { tenantId, status: { notIn: ['disconnected'] } },
+        where: { tenantId },
       }),
       this.prisma.bot.count({ where: { tenantId } }),
       this.prisma.tenantUser.count({
@@ -120,10 +126,10 @@ export class PlanLimitsService {
 
     const violations: string[] = [];
 
-    if (activeSessions > newPlan.maxSessions) {
+    if (totalSessions > newPlan.maxSessions) {
       violations.push(
-        `${activeSessions} sessões ativas excedem o limite do plano ${newPlan.name} (${newPlan.maxSessions}). ` +
-          `Desconecte ${activeSessions - newPlan.maxSessions} sessão(ões) antes de fazer o downgrade.`,
+        `${totalSessions} sessões criadas excedem o limite do plano ${newPlan.name} (${newPlan.maxSessions}). ` +
+          `Exclua ${totalSessions - newPlan.maxSessions} sessão(ões) antes de fazer o downgrade.`,
       );
     }
 

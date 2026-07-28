@@ -67,6 +67,7 @@ model Tenant {
   roles          Role[]
   subscriptions  Subscription[]
   sessions       WhatsappSession[]
+  sessionEvents  SessionEvent[]
   bots           Bot[]
   contacts       Contact[]
   conversations  Conversation[]
@@ -219,10 +220,41 @@ model WhatsappSession {
   tenant        Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   settings      SessionSettings?
   conversations Conversation[]
+  events        SessionEvent[]
 
   @@unique([sessionName]) // DB-8: lookup por Evolution webhook
   @@index([tenantId, status]) // DB-8: listagem por status
   @@map("whatsapp_sessions")
+}
+
+/// 🔒 S23 — Log de eventos de CONEXÃO por sessão (substitui o uso indevido do
+/// inbox de mensagens como "log temporário"). Cada evento é uma transição de
+/// estado observada pelo backend (webhook CONNECTION_UPDATE/QRCODE_UPDATED,
+/// job de connect, logout manual) e é exibido na aba "Logs de conexão" da
+/// página de detalhes da sessão.
+model SessionEvent {
+  id        String   @id @default(uuid())
+  sessionId String   @map("session_id")
+  tenantId  String   @map("tenant_id")
+  /// Tipo do evento: created | qrcode_pending | connected | disconnected | error | logout | deleted
+  type      String
+  /// Código HTTP/WhatsApp de disconnect (401=conflict, 408=timeout, 440=gone).
+  statusCode Int?    @map("status_code")
+  /// Número conectado no momento do evento (vindo do webhook Evolution).
+  phone     String?
+  /// Mensagem legível para humanos (motivo do disconnect, etc.).
+  message   String?
+  /// Payload cru da Evolution para debug — guardamos só os campos relevantes.
+  metadata  Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  session WhatsappSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  tenant  Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt(sort: Desc)]) // S23: listagem por sessão, ordem desc
+  @@index([tenantId, createdAt(sort: Desc)]) // S23: listagem por tenant
+  @@index([type]) // S23: filtro por tipo
+  @@map("session_events")
 }
 
 model SessionSettings {

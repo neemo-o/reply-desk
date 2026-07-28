@@ -89,16 +89,23 @@ export class WhatsappSessionsProcessor extends WorkerHost {
     // para o refletir imediatamente no frontend.
     await this.sessionsService.updateStatus(sessionId, 'qrcode_pending');
 
+    // 🪵 S23 — Loga início do processo de conexão
+    await this.sessionsService.logEvent(sessionId, session.tenantId, 'qrcode_pending', {
+      message: 'Criando instância na Evolution API e gerando QR Code',
+    });
+
     const webhookUrl = this.evolution.buildWebhookUrl();
     const signatureHeader = { 'x-evolution-signature': webhookSecret };
 
     // Cria instância na Evolution. Já com webhook inline (reduz race
     // conditions vs criar e depois setWebhook).
+    // 🔒 S23 — NÃO passamos mais `number` para a Evolution: a integração
+    // WHATSAPP-BAILEYS não usa pairing code por default; o QR Code é o fluxo
+    // principal. O número virá automaticamente do webhook ao escanear.
     const result = await this.evolution.createInstance({
       instanceName: session.sessionName,
       webhookUrl,
       webhookSignatureHeader: signatureHeader,
-      ...(session.phone ? { number: session.phone } : {}),
     });
 
     // Persiste evolutionInstanceId retornado pela Evolution.

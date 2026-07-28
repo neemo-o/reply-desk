@@ -8,11 +8,11 @@ import { toast } from "sonner";
 import { extractApiErrorMessage } from "@/lib/api-errors";
 
 /**
- * 📱 Hooks de WhatsApp — sessões + inbox.
+ * 📱 Hooks de WhatsApp — sessões + inbox + logs de conexão.
  *
  * Padrão: queryKey começa com ["whatsapp", ...] e invalida-se nos
- * mutations. O inbox usa polling de 3s enquanto houver uma sessão
- * selecionada, simulando log em tempo real das mensagens.
+ * mutations. O inbox e os logs usam polling de 3s enquanto houver uma
+ * sessão selecionada, simulando log em tempo real das mensagens/eventos.
  */
 
 const WHATSAPP_KEY = (tenantId: string | undefined) => ["whatsapp", tenantId];
@@ -57,7 +57,7 @@ export function useReconnectSession() {
     mutationFn: (id: string) => whatsappService.reconnect(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["whatsapp"] });
-      toast.success("Reconexão iniciada.");
+      toast.success("Reconexão iniciada — QR Code disponível.");
     },
     onError: (err) => {
       toast.error(extractApiErrorMessage(err, "Não foi possível reconectar."));
@@ -65,13 +65,18 @@ export function useReconnectSession() {
   });
 }
 
+/**
+ * 🔒 S23 — "Logout" agora é "Desconectar (trocar celular)": gera QR novo.
+ * O toast explica: a sessão volta para qrcode_pending e o frontend já
+ * começa a pollar o QR automaticamente.
+ */
 export function useLogoutSession() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => whatsappService.logout(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["whatsapp"] });
-      toast.success("Sessão desconectada.");
+      toast.success("Desconectado. Escaneie o QR Code novo para conectar outro número.");
     },
     onError: (err) => {
       toast.error(extractApiErrorMessage(err, "Não foi possível desconectar a sessão."));
@@ -96,10 +101,8 @@ export function useDeleteSession() {
 /**
  * 🪵 useWhatsappInbox — polling das últimas mensagens da sessão.
  *
- * Usado pela página `/dashboard/whatsapp` para mostrar um log em tempo
- * real das mensagens recebidas/envidas. Polling de 3s é adequado para o
- * modo "temporário" — quando mensagens virarem um módulo completo, o
- * ideal é migrar para WebSocket/SSE.
+ * 🔒 S23 — Reservado para visão administrativa (owner/admin). A página de
+ * detalhes agora usa useSessionLogs para mostrar logs de CONEXÃO.
  */
 export function useWhatsappInbox(
   sessionId: string | null | undefined,
@@ -112,6 +115,27 @@ export function useWhatsappInbox(
   return useQuery({
     queryKey: [...WHATSAPP_KEY(tenant?.id), "inbox", sessionId, options.take ?? 50],
     queryFn: () => whatsappService.getInbox(sessionId as string, { take: options.take ?? 50 }),
+    enabled,
+    refetchInterval: 3_000,
+  });
+}
+
+/**
+ * 🪵 S23 — Logs de CONEXÃO da sessão (SessionEvent). Substitui o uso do
+ * inbox como "log temporário". Polling de 3s para acompanhar transições
+ * (qrcode_pending → connected, disconnected, etc.) em tempo real.
+ */
+export function useSessionLogs(
+  sessionId: string | null | undefined,
+  options: { enabled?: boolean; take?: number } = {},
+) {
+  const { isAuthenticated, tenant } = useAuth();
+  const enabled =
+    options.enabled !== false && isAuthenticated && Boolean(tenant) && Boolean(sessionId);
+
+  return useQuery({
+    queryKey: [...WHATSAPP_KEY(tenant?.id), "logs", sessionId, options.take ?? 50],
+    queryFn: () => whatsappService.getLogs(sessionId as string, { take: options.take ?? 50 }),
     enabled,
     refetchInterval: 3_000,
   });

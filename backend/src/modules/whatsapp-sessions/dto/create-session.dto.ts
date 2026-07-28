@@ -1,4 +1,4 @@
-import { IsOptional, IsString, Length, Matches } from 'class-validator';
+import { IsString, Length, Matches } from 'class-validator';
 
 export class CreateSessionDto {
   /**
@@ -13,12 +13,8 @@ export class CreateSessionDto {
   })
   name: string;
 
-  /**
-   * Número de telefone opcional em formato E.164 (ex.: 5511999999999).
-   * Se informado, é pré-configurado na Evolution para pairing code.
-   */
-  @IsOptional()
-  @IsString()
-  @Matches(/^\d{6,20}$/, { message: 'phone deve conter apenas dígitos (E.164)' })
-  phone?: string;
+  // 🔒 S23 — O campo `phone` foi REMOVIDO do DTO. O número do WhatsApp é
+  // atribuído automaticamente quando o celular escaneia o QR Code (webhook
+  // CONNECTION_UPDATE.wid.user). Não faz sentido perguntar ao usuário qual
+  // número ele vai conectar — ele escolhe escaneando o QR.
 }
