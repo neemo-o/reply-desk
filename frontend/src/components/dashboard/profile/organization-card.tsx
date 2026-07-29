@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Loader2 } from "lucide-react";
+import { Loader2, ChevronDown } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { useTenantSummary, useUpdateTenant } from "@/hooks/use-tenant";
 import { useAuth } from "@/contexts/auth-provider";
+import { TransferOwnershipCard } from "@/components/dashboard/profile/transfer-ownership-card";
 import type { TenantSummary } from "@/services/tenants-service";
 
 const ROLE_LABELS: Record<string, string> = {
@@ -57,33 +58,40 @@ export function OrganizationCard() {
   const isOwner = role === "owner";
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Organização</CardTitle>
-        <CardDescription>
-          {isOwner
-            ? "Edite os dados do seu workspace. Apenas o dono pode alterar."
-            : "Dados do workspace."}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-6">
-        {isLoadingSummary ? (
-          <Skeleton className="h-16 w-full" />
-        ) : isOwner ? (
-          <OrganizationForm summary={summary} />
-        ) : (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-4">
-            <div>
-              <p className="font-medium">{summary?.name}</p>
-              <p className="text-sm text-muted-foreground">/{summary?.slug}</p>
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Organização</CardTitle>
+          <CardDescription>
+            {isOwner
+              ? "Edite os dados do seu workspace. Apenas o dono pode alterar."
+              : "Dados do workspace."}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {isLoadingSummary ? (
+            <Skeleton className="h-16 w-full" />
+          ) : isOwner ? (
+            <OrganizationForm summary={summary} />
+          ) : (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-4">
+              <div>
+                <p className="font-medium">{summary?.name}</p>
+                <p className="text-sm text-muted-foreground">/{summary?.slug}</p>
+              </div>
+              <Badge variant={tenant?.role === "owner" ? "success" : "secondary"}>
+                {tenant ? ROLE_LABELS[tenant.role] ?? tenant.role : "—"}
+              </Badge>
             </div>
-            <Badge variant={tenant?.role === "owner" ? "success" : "secondary"}>
-              {tenant ? ROLE_LABELS[tenant.role] ?? tenant.role : "—"}
-            </Badge>
-          </div>
-        )}
-      </CardContent>
-    </Card>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* 🔒 M17 — Transferência de ownership — só o dono vê.
+          Movido de members-page para a aba de configurações da organização,
+          onde o dono gerencia aspectos sensíveis do workspace. */}
+      {isOwner && <TransferOwnershipCard />}
+    </div>
   );
 }
 
@@ -158,32 +166,38 @@ function OrganizationForm({
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-1.5">
           <Label htmlFor="org-timezone">Fuso horário</Label>
-          <select
-            id="org-timezone"
-            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            {...register("timezone")}
-          >
-            {TIMEZONES.map((tz) => (
-              <option key={tz} value={tz}>
-                {tz}
-              </option>
-            ))}
-          </select>
+          <div className="relative">
+            <select
+              id="org-timezone"
+              className="flex h-10 w-full appearance-none rounded-md border border-input bg-background px-3 py-2 pe-9 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              {...register("timezone")}
+            >
+              {TIMEZONES.map((tz) => (
+                <option key={tz} value={tz}>
+                  {tz}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          </div>
         </div>
 
         <div className="space-y-1.5">
           <Label htmlFor="org-language">Idioma</Label>
-          <select
-            id="org-language"
-            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            {...register("language")}
-          >
-            {LANGUAGES.map((lang) => (
-              <option key={lang.value} value={lang.value}>
-                {lang.label}
-              </option>
-            ))}
-          </select>
+          <div className="relative">
+            <select
+              id="org-language"
+              className="flex h-10 w-full appearance-none rounded-md border border-input bg-background px-3 py-2 pe-9 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              {...register("language")}
+            >
+              {LANGUAGES.map((lang) => (
+                <option key={lang.value} value={lang.value}>
+                  {lang.label}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          </div>
         </div>
       </div>
 

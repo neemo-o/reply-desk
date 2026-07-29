@@ -1,4 +1,4 @@
-import { User, Building2, CreditCard } from "lucide-react";
+import { User, Building2, CreditCard, Settings } from "lucide-react";
 import { DashboardLayout } from "@/layouts/dashboard-layout";
 import { AccountCard } from "@/components/dashboard/profile/account-card";
 import { OrganizationCard } from "@/components/dashboard/profile/organization-card";
@@ -14,7 +14,10 @@ export function ProfilePage() {
   return (
     <DashboardLayout>
       <div className="mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight">Configurações</h1>
+        <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
+          <Settings className="h-6 w-6" />
+          Configurações
+        </h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Gerencie sua conta, sua organização e a assinatura do ReplyDesk.
         </p>

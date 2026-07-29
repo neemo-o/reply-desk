@@ -417,7 +417,7 @@ function SessionDetail({
     code?: string;
     pairingCode?: string;
   } | null>(null);
-  // 🔒 S23 — Countdown de regeneração do QR Code. A Evolution regenera
+  // 🔒 S23 — Countdown de regeneração do QR Code. A plataforma regenera
   // o QR aproximadamente a cada 60s. Mostramos um contador regressivo
   // para o usuário saber quando o QR atual vai expirar.
   const [qrSecondsLeft, setQrSecondsLeft] = useState(60);
@@ -470,7 +470,7 @@ function SessionDetail({
         </SheetTitle>
         <SheetDescription>
           {canManage
-            ? "Detalhes e ações da sessão conectada via Evolution API."
+            ? "Detalhes e ações da sessão WhatsApp conectada."
             : "Status e última atividade da sessão."}
         </SheetDescription>
       </SheetHeader>
@@ -495,7 +495,7 @@ function SessionDetail({
               label="ID da sessão"
               value={session.sessionName}
               mono
-              hint="Identificador único da instância na Evolution API"
+              hint="Identificador único desta instância na plataforma"
             />
           )}
           <DetailRow
@@ -571,7 +571,7 @@ function SessionDetail({
               </div>
             )}
             <p className="text-xs text-muted-foreground">
-              O QR é buscado em tempo real na Evolution API e nunca é persistido no banco.
+              O QR é buscado em tempo real na plataforma e nunca é persistido no banco.
             </p>
           </div>
         )}
@@ -767,7 +767,7 @@ function CreateSessionDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Nova sessão WhatsApp</AlertDialogTitle>
           <AlertDialogDescription>
-            Crie a sessão na Evolution API. Após criar, escaneie o QR Code para
+            Crie uma nova sessão WhatsApp. Após criar, escaneie o QR Code para
             conectar o número — o telefone é detectado automaticamente do celular
             que escanear.
           </AlertDialogDescription>
@@ -837,7 +837,7 @@ function DeleteSessionDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Excluir sessão {sessionName}?</AlertDialogTitle>
           <AlertDialogDescription>
-            A instância será removida da Evolution API permanentemente. As credenciais
+            A instância será removida permanentemente da plataforma. As credenciais
             armazenadas serão destruídas. Esta ação é irreversível.
           </AlertDialogDescription>
         </AlertDialogHeader>

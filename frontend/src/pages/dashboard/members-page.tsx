@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { UserPlus, Loader2, Trash2, Users, MailOpen, X, ShieldAlert } from "lucide-react";
+import { UserPlus, Loader2, Trash2, Users, MailOpen, X, ChevronDown } from "lucide-react";
 import { DashboardLayout } from "@/layouts/dashboard-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -29,8 +29,6 @@ import {
   useRemoveMember,
   useCancelInvitation,
   useUpdateMemberRole,
-  useTransferOwnership,
-  useTenantSummary,
 } from "@/hooks/use-tenant";
 import { useSubscription } from "@/hooks/use-subscription";
 import type { TenantRole } from "@/types/auth";
@@ -235,9 +233,6 @@ export function MembersPage() {
           )}
         </CardContent>
       </Card>
-
-        {/* 🔒 M17 — Transferência de ownership — só o dono vê. */}
-        {isOwner && <TransferOwnershipCard />}
       </div>
     </DashboardLayout>
   );
@@ -372,14 +367,17 @@ function InviteMemberDialog({
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="invite-role">Papel</Label>
-            <select
-              id="invite-role"
-              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              {...register("roleName")}
-            >
-              <option value="agent">Atendente</option>
-              <option value="admin">Administrador</option>
-            </select>
+            <div className="relative">
+              <select
+                id="invite-role"
+                className="flex h-10 w-full appearance-none rounded-md border border-input bg-background px-3 py-2 pe-9 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                {...register("roleName")}
+              >
+                <option value="agent">Atendente</option>
+                <option value="admin">Administrador</option>
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            </div>
             <p className="text-xs text-muted-foreground">
               O convidado receberá um e-mail com o link de cadastro.
             </p>
@@ -422,23 +420,26 @@ function RoleSelect({
     : ["admin", "agent"];
 
   return (
-    <select
-      className="h-8 rounded-md border border-input bg-background px-2 py-1 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      value={currentRole}
-      disabled={updateMemberRole.isPending}
-      onChange={(e) => {
-        const newName = e.target.value as TenantRole;
-        if (newName !== currentRole) {
-          updateMemberRole.mutate({ memberId, roleName: newName });
-        }
-      }}
-    >
-      {options.map((r) => (
-        <option key={r} value={r}>
-          {ROLE_LABELS[r]}
-        </option>
-      ))}
-    </select>
+    <div className="relative">
+      <select
+        className="h-8 appearance-none rounded-md border border-input bg-background py-1 pl-2 pr-7 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        value={currentRole}
+        disabled={updateMemberRole.isPending}
+        onChange={(e) => {
+          const newName = e.target.value as TenantRole;
+          if (newName !== currentRole) {
+            updateMemberRole.mutate({ memberId, roleName: newName });
+          }
+        }}
+      >
+        {options.map((r) => (
+          <option key={r} value={r}>
+            {ROLE_LABELS[r]}
+          </option>
+        ))}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
+    </div>
   );
 }
 
@@ -482,136 +483,5 @@ function RemoveMemberDialog({
   );
 }
 
-/**
- * 🔒 M17 — Card de transferência de ownership.
- * Só é renderizado para o dono atual (guard no pai). Mostra um card âmbar
- * com botão que abre o dialog de confirmação forte.
- */
-function TransferOwnershipCard() {
-  const { data: members, isLoading } = useTenantMembers();
 
-  // Só mostra o card se houver outros membros para receber o ownership.
-  const eligibleMembers = members?.filter((m) => m.role.name !== "owner") ?? [];
-  if (!isLoading && eligibleMembers.length === 0) return null;
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-lg">
-          <ShieldAlert className="h-5 w-5 text-amber-500" />
-          Transferir propriedade da organização
-        </CardTitle>
-        <CardDescription>
-          Transfira a propriedade (ownership) para outro membro. Você passará a
-          ser administrador e o membro escolhido se tornará o novo dono. Esta
-          operação não pode ser desfeita sem o concordância do novo dono.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        {isLoading ? (
-          <Skeleton className="h-10 w-full" />
-        ) : (
-          <TransferOwnershipDialog members={eligibleMembers} />
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function TransferOwnershipDialog({
-  members,
-}: {
-  members: { id: string; user: { id: string; name: string; email: string }; role: { name: TenantRole } }[];
-}) {
-  const { data: summary } = useTenantSummary();
-  const transferOwnership = useTransferOwnership();
-  const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
-  const [confirmText, setConfirmText] = useState("");
-
-  const orgName = summary?.name ?? "";
-  const canConfirm =
-    selectedMemberId !== null && confirmText.trim() === orgName.trim() && !transferOwnership.isPending;
-
-  return (
-    <AlertDialog>
-      <AlertDialogTrigger asChild>
-        <Button variant="outline" className="border-amber-400 text-amber-600 hover:bg-amber-50">
-          Transferir ownership
-        </Button>
-      </AlertDialogTrigger>
-      <AlertDialogContent className="max-w-md">
-        <AlertDialogHeader>
-          <AlertDialogTitle>Transferir propriedade da organização</AlertDialogTitle>
-          <AlertDialogDescription asChild>
-            <div className="space-y-3">
-              <p>
-                Você está prestes a transferir a propriedade da organização{" "}
-                <strong>{orgName || "(nome não carregado)"}</strong> para outro
-                membro. Você passará a ser <strong>administrador</strong> e
-                perderá acesso exclusivo ao faturamento e à edição da organização.
-              </p>
-              <p>Selecione o novo dono:</p>
-            </div>
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-
-        <div className="space-y-3">
-          <select
-            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            value={selectedMemberId ?? ""}
-            onChange={(e) => setSelectedMemberId(e.target.value || null)}
-            disabled={transferOwnership.isPending}
-          >
-            <option value="">Escolha um membro…</option>
-            {members.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.user.name} ({m.user.email}) — {ROLE_LABELS[m.role.name] ?? m.role.name}
-              </option>
-            ))}
-          </select>
-
-          <div className="space-y-1.5">
-            <p className="text-sm text-muted-foreground">
-              Para confirmar, digite o nome da organização exatamente como está escrito:{" "}
-              <strong className="font-mono">{orgName}</strong>
-            </p>
-            <Input
-              placeholder={orgName}
-              value={confirmText}
-              onChange={(e) => setConfirmText(e.target.value)}
-              disabled={transferOwnership.isPending}
-              aria-label="Confirme o nome da organização"
-            />
-          </div>
-        </div>
-
-        <AlertDialogFooter>
-          <AlertDialogCancel
-            onClick={() => {
-              setSelectedMemberId(null);
-              setConfirmText("");
-            }}
-          >
-            Cancelar
-          </AlertDialogCancel>
-          <AlertDialogAction
-            disabled={!canConfirm}
-            onClick={(e) => {
-              e.preventDefault();
-              if (selectedMemberId) {
-                transferOwnership.mutate(selectedMemberId);
-                setSelectedMemberId(null);
-                setConfirmText("");
-              }
-            }}
-            className="bg-amber-600 text-white hover:bg-amber-700"
-          >
-            {transferOwnership.isPending && <Loader2 className="animate-spin" />}
-            Transferir ownership
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  );
-}
 
