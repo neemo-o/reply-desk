@@ -20,6 +20,7 @@ import { WhatsappSessionsService, ReconnectNeedsRecreateException } from './what
 import { ContactFilterService } from './contact-filter.service';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { UpdateSessionSettingsDto } from './dto/update-session-settings.dto';
+import { UpdateSessionNameDto } from './dto/update-session-name.dto';
 import {
   AddContactToListDto,
   CONTACT_LISTS,
@@ -326,6 +327,21 @@ export class WhatsappSessionsController {
   @Roles('owner', 'admin')
   remove(@CurrentTenant() tenantId: string, @Param('id') id: string) {
     return this.sessionsService.delete(tenantId, id);
+  }
+
+  /**
+   * 🔒 S24-b — Renomeia o nome de exibição (`name`) da sessão. Não toca
+   * em `sessionName` (interno) nem em `phone`. Não reconecta. Apenas
+   * atualiza o nome que aparece na tabela/Sheet/drawer.
+   */
+  @Patch(':id/name')
+  @Roles('owner', 'admin')
+  rename(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+    @Body() dto: UpdateSessionNameDto,
+  ) {
+    return this.sessionsService.rename(tenantId, id, dto.name);
   }
 
   // ======================================================================

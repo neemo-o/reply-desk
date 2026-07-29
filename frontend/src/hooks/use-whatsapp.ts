@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   whatsappService,
 } from "@/services/whatsapp-service";
-import type { CreateSessionPayload } from "@/types/whatsapp";
+import type { CreateSessionPayload, WhatsappSession } from "@/types/whatsapp";
 import { useAuth } from "@/contexts/auth-provider";
 import { toast } from "sonner";
 import { extractApiErrorMessage } from "@/lib/api-errors";
@@ -94,6 +94,32 @@ export function useDeleteSession() {
     },
     onError: (err) => {
       toast.error(extractApiErrorMessage(err, "Não foi possível excluir a sessão."));
+    },
+  });
+}
+
+/**
+ * 🔒 S24-b — Renomeia o nome de exibição da sessão. Atualiza o cache
+ * da lista de sessões e do detalhe pra refletir o novo nome sem precisar
+ * recarregar.
+ */
+export function useRenameSession() {
+  const queryClient = useQueryClient();
+  const { tenant } = useAuth();
+  return useMutation({
+    mutationFn: (args: { id: string; name: string }) =>
+      whatsappService.rename(args.id, args.name),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["whatsapp"] });
+      queryClient.setQueryData<WhatsappSession[]>(
+        [...WHATSAPP_KEY(tenant?.id), "sessions"],
+        (prev) =>
+          prev?.map((s) => (s.id === data.id ? { ...s, name: data.name } : s)),
+      );
+      toast.success("Sessão renomeada.");
+    },
+    onError: (err) => {
+      toast.error(extractApiErrorMessage(err, "Não foi possível renomear a sessão."));
     },
   });
 }

@@ -13,7 +13,11 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { EvolutionService } from '../../common/evolution/evolution.service';
 import { PlanLimitsService } from '../subscriptions/plan-limits.service';
 import { isUuid } from '../../common/utils/security';
-import { CreateSessionDto } from './dto/create-session.dto';
+import {
+  CreateSessionDto,
+  normalizeContactFilterMode,
+  type ContactFilterMode,
+} from './dto/create-session.dto';
 
 /**
  * 🔒 WhatsappSessionsService — orquestra sessões de WhatsApp no banco.
@@ -215,7 +219,7 @@ export class WhatsappSessionsService {
      tenantId: string,
      sessionId: string,
      dto: {
-       contactFilterMode?: 'none' | 'whitelist' | 'blacklist';
+       contactFilterMode?: ContactFilterMode;
        activeBotId?: string | null;
        activeBotVersionId?: string | null;
        autoReconnect?: boolean;
@@ -275,10 +279,15 @@ export class WhatsappSessionsService {
          activeBotId: true,
          activeBotVersionId: true,
        },
-     });
+       });
 
-     return updated;
-   }
+       // 🔒 S24-b — Normaliza modos legados ('blacklist' → 'none') na saída
+       // para a UI não receber valores fora do enum atual.
+       return {
+       ...updated,
+       contactFilterMode: normalizeContactFilterMode(updated.contactFilterMode),
+       };
+       }
 
    /**
     * 🔒 S24 — Busca os settings da sessão (helper para o controller).
@@ -307,8 +316,12 @@ export class WhatsappSessionsService {
          presenceUpdate: true,
          webhookUrl: true,
        },
-     });
-   }
+     }).then((s) => ({
+       ...s,
+       // 🔒 S24-b — Normaliza modos legados ('blacklist' → 'none').
+       contactFilterMode: normalizeContactFilterMode(s.contactFilterMode),
+     }));
+     }
 
    /**
     * 🔒 S24 — Gate de conexão (chamado pelo POST /:id/connect). Revalida
@@ -930,6 +943,55 @@ export class WhatsappSessionsService {
     });
 
     return { status: 'qrcode_pending' };
+  }
+
+  /**
+   * 🔒 S24-b — Renomeia o nome de exibição da sessão (apenas o `name`,
+   * que aparece na UI/tabela). NÃO altera `sessionName` (identificador
+   * interno único usado pela Evolution) nem `phone`. Não reconecta a
+   * sessão — é só um update de metadata.
+   *
+   * Lança ConflictException se já existir outra sessão do tenant com o
+   * mesmo nome (validação de unicidade dentro do tenant).
+   */
+  async rename(
+    tenantId: string,
+    id: string,
+    newName: string,
+  ): Promise<{ id: string; name: string }> {
+    await this.findOne(tenantId, id);
+
+    const trimmed = newName.trim();
+    if (!trimmed) {
+      throw new BadRequestException('O nome não pode ficar vazio');
+    }
+
+    const existing = await this.prisma.whatsappSession.findFirst({
+      where: { tenantId, name: trimmed, NOT: { id } },
+      select: { id: true },
+    });
+    if (existing) {
+      throw new ConflictException(
+        'Já existe uma sessão com esse nome neste tenant',
+      );
+    }
+
+    const previous = await this.prisma.whatsappSession.findUnique({
+      where: { id },
+      select: { name: true },
+    });
+
+    const updated = await this.prisma.whatsappSession.update({
+      where: { id },
+      data: { name: trimmed },
+      select: { id: true, name: true },
+    });
+
+    await this.logEvent(id, tenantId, 'updated', {
+      message: `Sessão renomeada: "${previous?.name ?? '?'}" → "${updated.name}"`,
+    });
+
+    return updated;
   }
 
   /**

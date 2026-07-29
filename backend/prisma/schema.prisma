@@ -276,15 +276,19 @@ model SessionSettings {
   typingIndicator Boolean @default(true) @map("typing_indicator")
   presenceUpdate  Boolean @default(true) @map("presence_update")
 
-  // 🔒 S24 — Modo de filtragem de contatos (whitelist/blacklist).
-  // Valores: 'none' | 'whitelist' | 'blacklist'.
-  // Regras (aplicadas no onMessagesUpsert antes da persistência):
-  //  - 'whitelist' não-vazia: só responde quem está na lista; contato fora
-  //    da lista → mensagem NEM entra no DB.
-  //  - 'whitelist' vazia: whitelist não restringe (cai pra blacklist).
-  //  - 'blacklist' não-vazia: quem está na lista é bloqueado; contato fora
-  //    da blacklist → passa (sujeito à whitelist acima).
-  //  - 'none': responde a todos (comportamento legado).
+  // 🔒 S24 — Modo de filtragem de contatos via whitelist.
+  // Valores: 'none' | 'whitelist'.
+  //
+  // 🔒 S24-b — `'blacklist'` deixou de ser um modo. A blacklist é uma
+  // lista independente (estilo banimento) que SEMPRE bloqueia — independente
+  // do modo aqui definido. Regras aplicadas no onMessagesUpsert antes da
+  // persistência:
+  //  - 'whitelist' + lista NÃO-vazia: só responde quem está na whitelist
+  //    (e não está na blacklist).
+  //  - 'whitelist' + lista vazia: whitelist não restringe; cai pra só-blacklist.
+  //  - 'none': blacklist bloqueia quem está nela; resto passa.
+  //  - contato na whitelist E blacklist ao mesmo tempo: prevalece o bloqueio
+  //    (blacklist sempre vence — trava de segurança).
   contactFilterMode String @default("none") @map("contact_filter_mode")
 
   // 🔒 S24 — Bot ativo desta sessão. Obrigatório para a sessão ser

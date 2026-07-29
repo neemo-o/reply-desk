@@ -1,32 +1,42 @@
 import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import type { ContactFilterMode } from './dto/create-session.dto';
+import {
+  normalizeContactFilterMode,
+  type ContactFilterMode,
+} from './dto/create-session.dto';
 import type { ContactList } from './dto/add-contact-to-list.dto';
 
 /**
  * 🔒 S24 — Lógica central de whitelist/blacklist por sessão.
  *
- * Regras (aplicadas em `shouldRespondTo` antes do `$transaction` no webhook):
+ * 🔒 S24-b — A semântica mudou. Antes havia três modos (`none`,
+ * `whitelist`, `blacklist`); agora `blacklist` deixou de ser um modo
+ * porque é na verdade um estilo de banimento, não um modo de filtro.
  *
- *   whitelistMatch =
- *       (mode === 'whitelist' && contactInWhitelist)   // contato está na whitelist
- *    || (mode === 'whitelist' && whitelistIsEmpty)    // whitelist vazia = passa tudo
- *    || (mode !== 'whitelist');                       // whitelist desabilitada (mode=none|blacklist)
+ * Regras atuais (aplicadas em `shouldRespondTo` antes do `$transaction`
+ * no webhook):
  *
- *   finalPass = whitelistMatch
- *             && !(mode === 'blacklist' && contactInBlacklist);
+ *   blacklistBlocks  = contactInBlacklist                 // SEMPRE bloqueia
  *
- *   - 'none': passa (comportamento legado).
- *   - 'whitelist' + lista NÃO-vazia: só passa quem está na lista.
- *   - 'whitelist' + lista vazia: whitelist não restringe (cai pra blacklist).
- *   - 'blacklist' + lista NÃO-vazia: bloqueia quem está na lista.
+ *   whitelistPass    = mode !== 'whitelist'              // whitelist desabilitada
+ *                    || contactInWhitelist               // contato na lista
+ *                    || whitelistIsEmpty                 // whitelist vazia = passa tudo
+ *
+ *   finalPass        = whitelistPass && !blacklistBlocks
+ *
+ *   - mode='none' + lista NÃO-vazia: blacklist bloqueia quem está nela;
+ *     quem não está passa (comportamento de banimento puro).
+ *   - mode='whitelist' + lista NÃO-vazia: só passa quem está na whitelist
+ *     E não está na blacklist.
+ *   - mode='whitelist' + lista vazia: whitelist não restringe; cai pra
+ *     só-blacklist (mesmo comportamento de mode='none').
  *   - contato na whitelist E blacklist ao mesmo tempo: prevalece o bloqueio
  *     (blacklist sempre vence — é uma trava de segurança).
  *
- * Performance: o `shouldRespondTo` faz UMA query (findMany em
- * session_contact_list_items filtrando por sessionId+contactId, agrupado
- * por list no app) — não precisa de 2 queries separadas. Em sessões
- * pequenas (lista de até poucos milhares) é instantâneo.
+ * Performance: o `shouldRespondTo` faz DUAS queries no caso geral
+ * (items por sessão+contato + count da whitelist para detectar lista
+ * vazia). Em sessões pequenas (lista de até poucos milhares) é
+ * instantâneo.
  */
 @Injectable()
 export class ContactFilterService {
@@ -49,9 +59,10 @@ export class ContactFilterService {
       select: { contactFilterMode: true },
     });
 
-    // Sem settings ainda (legado) ou mode='none' → passa tudo.
-    const mode: ContactFilterMode = (settings?.contactFilterMode as ContactFilterMode) ?? 'none';
-    if (mode === 'none') return true;
+    // 🔒 S24-b — Modos legados ('blacklist') são normalizados na leitura.
+    const mode: ContactFilterMode = normalizeContactFilterMode(
+      settings?.contactFilterMode,
+    );
 
     // Uma query traz AMBAS as listas em que o contato aparece nessa sessão.
     // 0 ou 1 linha por lista, no máximo 2 linhas.
@@ -62,9 +73,9 @@ export class ContactFilterService {
     const inWhitelist = items.some((i) => i.list === 'whitelist');
     const inBlacklist = items.some((i) => i.list === 'blacklist');
 
-    // Tamanho das listas — para a regra "whitelist vazia = passa tudo".
-    // Se o contato está na whitelist mas queremos saber se a lista está
-    // vazia no geral, basta contar.
+    // Tamanho da whitelist — para a regra "whitelist vazia = passa tudo".
+    // Só consulta quando o modo exige checar (mode='whitelist'); em
+    // mode='none' a regra de whitelist é ignorada de qualquer forma.
     const whitelistIsEmpty =
       mode === 'whitelist'
         ? !(await this.prisma.sessionContactListItem.findFirst({
@@ -73,12 +84,13 @@ export class ContactFilterService {
           }))
         : false;
 
+    // 🔒 S24-b — Blacklist é SEMPRE banimento, independente do modo.
+    const blacklistBlocks = inBlacklist;
+
     const whitelistPass =
       mode !== 'whitelist' /* whitelist desabilitada */
       || inWhitelist /* contato na lista */
       || whitelistIsEmpty; /* lista vazia = não restringe */
-
-    const blacklistBlocks = mode === 'blacklist' && inBlacklist;
 
     const passes = whitelistPass && !blacklistBlocks;
     if (!passes) {

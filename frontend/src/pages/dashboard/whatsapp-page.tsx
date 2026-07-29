@@ -17,6 +17,10 @@ import {
   CircleX,
   Clock,
   Info,
+  Pencil,
+  Save,
+  X as XIcon,
+  Search,
 } from "lucide-react";
 import { DashboardLayout } from "@/layouts/dashboard-layout";
 import { Card, CardContent } from "@/components/ui/card";
@@ -58,6 +62,7 @@ import {
   useReconnectSession,
   useLogoutSession,
   useDeleteSession,
+  useRenameSession,
   useSessionLogs,
 } from "@/hooks/use-whatsapp";
 import { useBots } from "@/hooks/use-bots";
@@ -116,6 +121,7 @@ const EVENT_LABEL: Record<SessionEventType, string> = {
   error: "Erro",
   logout: "Desconectado (manual)",
   deleted: "Sessão excluída",
+  updated: "Atualização",
 };
 
 const EVENT_ICON: Record<SessionEventType, typeof CircleCheck> = {
@@ -126,6 +132,7 @@ const EVENT_ICON: Record<SessionEventType, typeof CircleCheck> = {
   error: AlertTriangle,
   logout: LogOut,
   deleted: Trash2,
+  updated: Info,
 };
 
 const EVENT_COLOR: Record<SessionEventType, string> = {
@@ -136,6 +143,7 @@ const EVENT_COLOR: Record<SessionEventType, string> = {
   error: "text-red-600 dark:text-red-400",
   logout: "text-orange-600 dark:text-orange-400",
   deleted: "text-zinc-500",
+  updated: "text-violet-600 dark:text-violet-400",
 };
 
 // ─── página principal ───────────────────────────────────────────────
@@ -462,12 +470,24 @@ function SessionDetail({
   const reconnect = useReconnectSession();
   const logout = useLogoutSession();
   const del = useDeleteSession();
+  const rename = useRenameSession();
 
   return (
     <>
       <SheetHeader>
-        <SheetTitle className="flex items-center gap-2 pr-8">
-          {session.name}
+        {/* 🔒 S24-b — Nome editável inline (só para owner/admin).
+            Mantemos o Badge de status no canto pra UX não mudar. */}
+        <SheetTitle className="flex flex-wrap items-center gap-2 pr-8">
+          {canManage ? (
+            <SessionRenameInline
+              sessionId={session.id}
+              currentName={session.name}
+              onRename={(newName) => rename.mutate({ id: session.id, name: newName })}
+              isPending={rename.isPending}
+            />
+          ) : (
+            <span>{session.name}</span>
+          )}
           <Badge variant={STATUS_BADGE[session.status]} className="gap-1.5">
             <StatusDot status={session.status} />
             {STATUS_LABEL[session.status]}
@@ -657,16 +677,143 @@ function DetailRow({
   );
 }
 
+/**
+ * 🔒 S24-b — Nome de exibição da sessão editável inline. Aparece como
+ * texto com botão "lápis" no estado padrão; clicar revela um Input + Save/Cancel.
+ *
+ * Re-sincroniza o estado local quando o `currentName` muda por outro
+ * motivo (ex.: polling que puxou valor atualizado do backend).
+ */
+function SessionRenameInline({
+  sessionId,
+  currentName,
+  onRename,
+  isPending,
+}: {
+  sessionId: string;
+  currentName: string;
+  onRename: (newName: string) => void;
+  isPending: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(currentName);
+
+  useEffect(() => {
+    if (!editing) setDraft(currentName);
+  }, [currentName, editing]);
+
+  function startEdit() {
+    setDraft(currentName);
+    setEditing(true);
+  }
+
+  function cancel() {
+    setDraft(currentName);
+    setEditing(false);
+  }
+
+  function save() {
+    const trimmed = draft.trim();
+    if (!trimmed || trimmed === currentName) {
+      cancel();
+      return;
+    }
+    onRename(trimmed);
+    setEditing(false);
+  }
+
+  if (!editing) {
+    return (
+      <span className="inline-flex items-center gap-1.5">
+        <span>{currentName}</span>
+        <button
+          type="button"
+          onClick={startEdit}
+          aria-label={`Renomear sessão ${currentName}`}
+          title="Renomear sessão"
+          className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <input
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            save();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            cancel();
+          }
+        }}
+        maxLength={80}
+        disabled={isPending}
+        // chave com sessionId força remontagem ao trocar de sessão,
+        // evitando lixo do draft anterior.
+        key={sessionId}
+        className="h-7 max-w-[18rem] rounded-md border border-input bg-background px-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
+      />
+      <button
+        type="button"
+        onClick={save}
+        disabled={isPending || !draft.trim() || draft.trim() === currentName}
+        aria-label="Salvar novo nome"
+        title="Salvar (Enter)"
+        className="inline-flex h-6 w-6 items-center justify-center rounded-md text-emerald-600 transition-colors hover:bg-emerald-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40 dark:text-emerald-400"
+      >
+        {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+      </button>
+      <button
+        type="button"
+        onClick={cancel}
+        disabled={isPending}
+        aria-label="Cancelar"
+        title="Cancelar (Esc)"
+        className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <XIcon className="h-3.5 w-3.5" />
+      </button>
+    </span>
+  );
+}
+
 // ─── 🪵 S23 — Painel de logs de CONEXÃO (substitui o InboxPanel) ────
 
 function ConnectionLogsPanel({ sessionId }: { sessionId: string }) {
   const { data: events, isLoading } = useSessionLogs(sessionId);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [query, setQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState<SessionEventType | "all">("all");
 
   // Auto-scroll para o topo quando novos eventos chegam (estão em ordem desc).
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
   }, [events]);
+
+  const filteredEvents = useMemo(() => {
+    if (!events) return [];
+    const q = query.trim().toLowerCase();
+    return events.filter((ev) => {
+      if (typeFilter !== "all" && ev.type !== typeFilter) return false;
+      if (!q) return true;
+      // Pesquisa case-insensitive em message, phone e statusCode.
+      return (
+        (ev.message?.toLowerCase().includes(q) ?? false) ||
+        (ev.phone?.toLowerCase().includes(q) ?? false) ||
+        (ev.statusCode != null && String(ev.statusCode).includes(q))
+      );
+    });
+  }, [events, query, typeFilter]);
+
+  const hasFilter = query.trim().length > 0 || typeFilter !== "all";
 
   return (
     <div>
@@ -677,6 +824,48 @@ function ConnectionLogsPanel({ sessionId }: { sessionId: string }) {
       <p className="mb-3 text-xs text-muted-foreground">
         histórico de status e eventos de conexão da sessão · atualiza a cada 3s
       </p>
+
+      {/* 🔒 S24-b — Barra de filtro + pesquisa */}
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+        <div className="relative flex-1">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/70" />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Pesquisar por mensagem, número ou código…"
+            className="h-8 w-full rounded-md border border-input bg-background pl-8 pr-2 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          />
+        </div>
+        <select
+          value={typeFilter}
+          onChange={(e) => setTypeFilter(e.target.value as SessionEventType | "all")}
+          className="h-8 rounded-md border border-input bg-background px-2 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        >
+          <option value="all">Todos os tipos</option>
+          {Object.entries(EVENT_LABEL).map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+        {hasFilter && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setQuery("");
+              setTypeFilter("all");
+            }}
+            className="h-8 gap-1 px-2 text-xs"
+            title="Limpar filtros"
+          >
+            <XIcon className="h-3.5 w-3.5" />
+            Limpar
+          </Button>
+        )}
+      </div>
+
       <div ref={scrollRef} className="max-h-[360px] space-y-2 overflow-y-auto pr-1">
         {isLoading ? (
           <div className="space-y-2">
@@ -688,8 +877,17 @@ function ConnectionLogsPanel({ sessionId }: { sessionId: string }) {
           <p className="py-8 text-center text-sm text-muted-foreground">
             Nenhum evento de conexão registrado ainda.
           </p>
+        ) : filteredEvents.length === 0 ? (
+          <div className="space-y-1 py-8 text-center">
+            <p className="text-sm text-muted-foreground">
+              Nenhum evento corresponde aos filtros.
+            </p>
+            <p className="text-xs text-muted-foreground/70">
+              Total carregado: {events.length}
+            </p>
+          </div>
         ) : (
-          events.map((ev) => <ConnectionLogRow key={ev.id} event={ev} />)
+          filteredEvents.map((ev) => <ConnectionLogRow key={ev.id} event={ev} />)
         )}
       </div>
     </div>
@@ -833,7 +1031,7 @@ function CreateSessionDialog({
               onChange={(e) => setActiveBotId(e.target.value)}
               required
               disabled={!!noActiveBots}
-              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
             >
               <option value="" disabled>
                 {botsLoading
@@ -863,7 +1061,7 @@ function CreateSessionDialog({
               id="session-filter"
               value={contactFilterMode}
               onChange={(e) => setContactFilterMode(e.target.value as ContactFilterMode)}
-              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
               {Object.entries(CONTACT_FILTER_LABELS).map(([value, label]) => (
                 <option key={value} value={value}>

@@ -91,4 +91,16 @@ export const whatsappService = {
     );
     return data;
   },
+
+  /**
+   * 🔒 S24-b — Renomeia o nome de exibição da sessão. Não mexe em
+   * sessionName/phone; apenas atualiza o `name`.
+   */
+  async rename(id: string, name: string): Promise<{ id: string; name: string }> {
+    const { data } = await apiClient.patch<{ id: string; name: string }>(
+      `/whatsapp/sessions/${id}/name`,
+      { name },
+    );
+    return data;
+  },
 };

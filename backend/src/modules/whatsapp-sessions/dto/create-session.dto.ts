@@ -10,10 +10,34 @@ import {
 
 /**
  * Valores aceitos para `contactFilterMode` no SessionSettings.
- * Espelha o CHECK mental que o service faz antes de gravar.
+ *
+ * 🔒 S24-b — A semântica mudou: `blacklist` deixou de ser um modo (era um
+ * estilo de banimento, não um modo de operação). Agora o modo só indica
+ * se a whitelist está ATIVA (`"whitelist"`) ou INATIVA (`"none"`). A
+ * blacklist, quando preenchida, SEMPRE bloqueia — independente do modo.
+ *
+ * Mantemos `"whitelist"` como o único estado "filtrando" (a regra
+ * "whitelist vazia = passa tudo" continua) e `"none"` como atalho para
+ * "desativar a whitelist completamente sem perder as listas salvas".
+ *
+ * Valores legados que aparecem no DB de tenants existentes serão
+ * normalizados na leitura (ver `normalizeContactFilterMode`).
  */
-export const CONTACT_FILTER_MODES = ['none', 'whitelist', 'blacklist'] as const;
+export const CONTACT_FILTER_MODES = ['none', 'whitelist'] as const;
 export type ContactFilterMode = (typeof CONTACT_FILTER_MODES)[number];
+
+/**
+ * 🔒 S24-b — Normaliza valores legados do enum `contactFilterMode`.
+ *
+ * - `'blacklist'` (modo antigo) → `'none'` (não tem mais sentido; blacklist
+ *   agora é sempre tratada como banimento, nunca como modo de filtro).
+ * - qualquer outro valor fora da whitelist de modos atuais → `'none'`.
+ *
+ * Use ao LER do banco para evitar mandar string inválida pro Prisma/UI.
+ */
+export function normalizeContactFilterMode(raw: unknown): ContactFilterMode {
+  return raw === 'whitelist' ? 'whitelist' : 'none';
+}
 
 export class CreateSessionDto {
   /**

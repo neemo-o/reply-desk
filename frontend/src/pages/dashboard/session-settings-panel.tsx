@@ -43,9 +43,14 @@ import {
  * Exibido dentro do Sheet de detalhes da sessão (aba "Configurações").
  * Permite ao owner/admin:
  *  1. Trocar o bot ativo (ativos/publicados) ou desvincular.
- *  2. Ajustar o modo de filtro de contatos (none/whitelist/blacklist).
+ *  2. Ligar/desligar a whitelist (modo "whitelist" ativa o filtro;
+ *     "none" deixa só a blacklist valer como banimento).
  *  3. Gerenciar as listas whitelist e blacklist (adicionar por número,
  *     remover item, ver contatos da lista).
+ *
+ * 🔒 S24-b — A blacklist NÃO é mais um modo; ela sempre bloqueia quando
+ * preenchida, independente do modo. Por isso a UI agora trata whitelist
+ * e blacklist como listas independentes que convivem na mesma sessão.
  *
  * Salvar as configurações NÃO fecha nem reconecta a sessão — o filtro
  * passa a valer no próximo inbound (confirmação por toast).
@@ -158,7 +163,7 @@ function GeneralSettingsTab({
           value={activeBotId}
           onChange={(e) => setActiveBotId(e.target.value)}
           disabled={noActiveBots}
-          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
         >
           <option value="">
             {botsLoading
@@ -189,7 +194,7 @@ function GeneralSettingsTab({
           id="settings-filter"
           value={filterMode}
           onChange={(e) => setFilterMode(e.target.value as ContactFilterMode)}
-          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         >
           {Object.entries(CONTACT_FILTER_LABELS).map(([value, label]) => (
             <option key={value} value={value}>
@@ -198,7 +203,10 @@ function GeneralSettingsTab({
           ))}
         </select>
         <p className="text-xs text-muted-foreground">
-          Mensagens filtradas não entram no banco (privacidade). Alterar o modo não
+          Whitelist vazia libera o envio para todos (subentende-se que sem
+          ninguém na lista, ninguém está sendo restringido). A blacklist é
+          independente e sempre bloqueia quando preenchida.
+          Mensagens filtradas não entram no banco (privacidade). Alterar não
           reconecta a sessão — vale a partir da próxima mensagem recebida.
         </p>
       </div>
@@ -236,9 +244,11 @@ function ContactListTab({
   const [note, setNote] = useState("");
 
   const filterMode = settings.data?.contactFilterMode ?? "none";
-  const isThisMode =
-    (list === "whitelist" && filterMode === "whitelist") ||
-    (list === "blacklist" && filterMode === "blacklist");
+  const isWhitelistActive = filterMode === "whitelist";
+  const isBlacklistActive = true; // 🔒 S24-b — blacklist SEMPRE é banimento.
+  const listIsRelevant =
+    (list === "whitelist" && isWhitelistActive) ||
+    (list === "blacklist" && isBlacklistActive);
 
   async function addByPhone(e: React.FormEvent) {
     e.preventDefault();
@@ -266,23 +276,43 @@ function ContactListTab({
 
   return (
     <div className="space-y-5 pt-2">
-      {/* Aviso de modo ativo */}
-      {!isThisMode && (
+      {/* Aviso de relevância da lista */}
+      {!listIsRelevant && (
         <div className="flex items-start gap-2 rounded-md border border-amber-300/40 bg-amber-50/50 p-3 text-xs text-amber-900 dark:border-amber-800/40 dark:bg-amber-950/30 dark:text-amber-200">
           <ListFilter className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
-            O filtro atual está em <strong>{CONTACT_FILTER_LABELS[filterMode].split(" (")[0].toLowerCase()}</strong>.
-            Esta lista só tem efeito quando o filtro está em{" "}
-            <strong>{list}</strong>. Edite em <em>Geral</em>.
+            {list === "whitelist" ? (
+              <>
+                A whitelist está desativada (modo <strong>none</strong>).
+                Contatos adicionados aqui ficam salvos mas não restringem
+                ninguém até você ativar o modo <strong>whitelist</strong> em
+                <em> Geral</em>.
+              </>
+            ) : (
+              <>A blacklist sempre bloqueia quando preenchida.</>
+            )}
           </span>
         </div>
       )}
-      {isThisMode && (
+      {listIsRelevant && list === "whitelist" && (
         <div className="flex items-start gap-2 rounded-md border border-emerald-300/40 bg-emerald-50/50 p-3 text-xs text-emerald-900 dark:border-emerald-800/40 dark:bg-emerald-950/30 dark:text-emerald-200">
           <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
-            Filtro ativo para esta lista. Mensagens dos contatos abaixo{" "}
-            {list === "whitelist" ? "passam" : "são bloqueadas"} (não entram no banco).
+            Whitelist ativa. Mensagens dos contatos abaixo passam para o
+            bot; os demais são bloqueados (não entram no banco).
+            {filterMode === "whitelist" && contacts.data?.length === 0 && (
+              <em> Lista vazia = passa qualquer um.</em>
+            )}
+          </span>
+        </div>
+      )}
+      {listIsRelevant && list === "blacklist" && (
+        <div className="flex items-start gap-2 rounded-md border border-rose-300/40 bg-rose-50/50 p-3 text-xs text-rose-900 dark:border-rose-800/40 dark:bg-rose-950/30 dark:text-rose-200">
+          <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            Blacklist sempre ativa. Mensagens dos contatos abaixo são
+            bloqueadas (não entram no banco), independente do modo de
+            whitelist.
           </span>
         </div>
       )}
@@ -368,7 +398,7 @@ function ContactListTab({
         ) : !contacts.data || contacts.data.length === 0 ? (
           <p className="py-6 text-center text-sm text-muted-foreground">
             {list === "whitelist"
-              ? "Whitelist vazia — quando o filtro está em “whitelist”, todos passam."
+              ? "Whitelist vazia. Se o modo whitelist estiver ativo, todos passam; se não, a whitelist fica sem efeito."
               : "Blacklist vazia — ninguém está bloqueado."}
           </p>
         ) : (

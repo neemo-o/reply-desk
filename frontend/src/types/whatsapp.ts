@@ -54,17 +54,26 @@ export interface CreateSessionPayload {
   contactFilterMode?: ContactFilterMode;
 }
 
-// 🔒 S24 — Modos do filtro de contatos da sessão.
-export type ContactFilterMode = "none" | "whitelist" | "blacklist";
+// 🔒 S24-b — 'blacklist' deixou de ser um modo (é banimento, sempre ativo
+// quando preenchido). O modo só indica se a whitelist está ATIVA
+// (`"whitelist"`) ou INATIVA (`"none"`).
+export type ContactFilterMode = "none" | "whitelist";
 export type ContactList = "whitelist" | "blacklist";
 
 export const CONTACT_FILTER_LABELS: Record<ContactFilterMode, string> = {
-  none: "Sem filtro (responde qualquer contato)",
+  none:
+    "Sem whitelist (só blacklist bloqueia, se houver)",
   whitelist:
-    "Whitelist (só responde quem está na lista; vazia = responde qualquer um)",
-  blacklist:
-    "Blacklist (bloqueia contatos da lista; aplicada quando whitelist não restringe)",
+    "Whitelist ativa (só responde quem está na lista; vazia = responde qualquer um)",
 };
+
+/**
+ * 🔒 S24-b — Normaliza valores legados do enum (ex.: `'blacklist'` salvo
+ * antes da mudança → `'none'`). Mesmo normalizador que o backend usa.
+ */
+export function normalizeContactFilterMode(raw: unknown): ContactFilterMode {
+  return raw === "whitelist" ? "whitelist" : "none";
+}
 
 // 🔒 S24 — Settings completas da sessão (resposta de GET/PATCH
 // /whatsapp/sessions/:id/settings). Alguns campos são só leitura
@@ -171,7 +180,8 @@ export type SessionEventType =
   | "disconnected"
   | "error"
   | "logout"
-  | "deleted";
+  | "deleted"
+  | "updated";
 
 export interface SessionEvent {
   id: string;
