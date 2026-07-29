@@ -139,9 +139,9 @@ export class WhatsappSessionsService {
    * usar `findAllSafe` (sem dados sensíveis como sessionName/evolutionInstanceId).
    * Aqui retornamos o conjunto completo — o controller decide qual expor.
    */
-  findAll(tenantId: string, opts: { take?: number; cursor?: string } = {}) {
+  async findAll(tenantId: string, opts: { take?: number; cursor?: string } = {}) {
     const take = Math.min(Math.max(opts.take ?? 50, 1), 100);
-    return this.prisma.whatsappSession.findMany({
+    const sessions = await this.prisma.whatsappSession.findMany({
       where: { tenantId },
       orderBy: { createdAt: 'desc' },
       take,
@@ -150,6 +150,7 @@ export class WhatsappSessionsService {
         id: true,
         name: true,
         phone: true,
+        profileName: true,
         sessionName: true,
         evolutionInstanceId: true,
         status: true,
@@ -157,6 +158,129 @@ export class WhatsappSessionsService {
         createdAt: true,
       },
     });
+
+    // O webhook é a fonte principal do telefone/nome, mas algumas versões da
+    // Evolution enviam CONNECTION_UPDATE sem o WID. Quando isto acontece a
+    // sessão já aparece como conectada, porém sem número. Consultamos a
+    // instância apenas nesse caso e persistimos o resultado para as próximas
+    // leituras (não expõe esta consulta a agentes, que usam findAllSafe).
+    return Promise.all(
+      sessions.map(async (session) => {
+        const needsSync =
+          session.status === 'connected' && (!session.phone || !session.profileName);
+        if (!needsSync) return session;
+        const details = await this.syncConnectedDetails(session.id, session.sessionName);
+        if (!details.phone && !details.profileName) return session;
+        return { ...session, ...details };
+      }),
+    );
+  }
+
+  /**
+   * Recupera o telefone e nome do perfil da instância já conectada como
+   * fallback ao webhook. A resposta de fetchInstances varia entre builds da
+   * Evolution, por isso a extração aceita os formatos usuais (ownerJid, wid,
+   * number e phoneNumber; profileName/profileName do objeto externo).
+   */
+  private async syncConnectedDetails(
+    sessionId: string,
+    sessionName: string,
+  ): Promise<{ phone?: string | null; profileName?: string | null }> {
+    try {
+      const instance = await this.evolution.fetchInstance(sessionName);
+      const phone = this.extractEvolutionPhone(instance);
+      const profileName = this.extractEvolutionProfileName(instance);
+      const updates: { phone?: string; profileName?: string } = {};
+      if (phone) updates.phone = phone;
+      if (profileName) updates.profileName = profileName;
+      if (Object.keys(updates).length === 0) return { phone: null, profileName: null };
+      await this.prisma.whatsappSession.update({
+        where: { id: sessionId },
+        data: updates,
+      });
+      this.logger.log(
+        `session ${sessionId}: detalhes sincronizados da Evolution ` +
+        `(phone=${updates.phone ?? '-'} profileName=${updates.profileName ?? '-'})`,
+      );
+      return { phone: updates.phone ?? null, profileName: updates.profileName ?? null };
+    } catch (err) {
+      // Não bloqueia a lista de sessões se a Evolution estiver indisponível.
+      this.logger.debug(
+        `session ${sessionId}: não foi possível sincronizar detalhes da Evolution: ${(err as Error).message}`,
+      );
+      return { phone: null, profileName: null };
+    }
+  }
+
+  /**
+   * Extrai o profileName da resposta de fetchInstances.
+   *
+   * ⚠️ Atenção: NÃO usamos `name` como chave porque a Evolution devolve o
+   * `sessionName` da instância nesse campo (formato `rd-<tenant>-<rand>`).
+   * Se a Evolution responder com `profileName=null` (caso comum em
+   * fetchInstances), aceitar `name` faria gravar o sessionName no banco —
+   * e a UI mostraria algo como "75 9 1234-5678 (rd-ebd31588-e4dde6f9ccc7)".
+   * Só aceitamos `profileName` / `profile_name` (e variantes dentro do
+   * objeto `profile`). Fallback para 'name' foi removido propositalmente.
+   *
+   * Para webhook CONNECTION_UPDATE usamos um caminho separado
+   * (evolution-webhooks.service.ts) que SÓ lê do payload do evento —
+   * não passa por aqui.
+   */
+  private extractEvolutionProfileName(value: unknown, depth = 0): string | null {
+    if (depth > 5 || value === null || value === undefined) return null;
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const name = this.extractEvolutionProfileName(item, depth + 1);
+        if (name) return name;
+      }
+      return null;
+    }
+    if (typeof value !== 'object') return null;
+
+    const record = value as Record<string, unknown>;
+    const nameKeys = ['profileName', 'profile_name'];
+    for (const key of nameKeys) {
+      const candidate = record[key];
+      if (typeof candidate === 'string' && candidate.trim().length > 0) {
+        return candidate.trim();
+      }
+    }
+
+    for (const childKey of ['instance', 'data', 'connection', 'profile']) {
+      const name = this.extractEvolutionProfileName(record[childKey], depth + 1);
+      if (name) return name;
+    }
+    return null;
+  }
+
+  private extractEvolutionPhone(value: unknown, depth = 0): string | null {
+    if (depth > 5 || value === null || value === undefined) return null;
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const phone = this.extractEvolutionPhone(item, depth + 1);
+        if (phone) return phone;
+      }
+      return null;
+    }
+    if (typeof value !== 'object') return null;
+
+    const record = value as Record<string, unknown>;
+    const phoneKeys = ['ownerJid', 'owner', 'phone', 'number', 'user'];
+    for (const key of phoneKeys) {
+      const candidate = record[key];
+      if (typeof candidate !== 'string') continue;
+      const digits = candidate.split(/[:@]/)[0].replace(/\D/g, '');
+      // E.164 aceita até 15 dígitos. O mínimo evita confundir IDs internos
+      // curtos da instância com um telefone.
+      if (digits.length >= 8 && digits.length <= 15) return digits;
+    }
+
+    for (const childKey of ['instance', 'data', 'connection', 'profile', 'wid', 'phoneNumber']) {
+      const phone = this.extractEvolutionPhone(record[childKey], depth + 1);
+      if (phone) return phone;
+    }
+    return null;
   }
 
   /**
@@ -190,6 +314,7 @@ export class WhatsappSessionsService {
         tenantId: true,
         name: true,
         phone: true,
+        profileName: true,
         sessionName: true,
         evolutionInstanceId: true,
         status: true,
@@ -310,6 +435,7 @@ export class WhatsappSessionsService {
         tenantId: true,
         name: true,
         phone: true,
+        profileName: true,
         sessionName: true,
         evolutionInstanceId: true,
         status: true,
@@ -404,6 +530,20 @@ export class WhatsappSessionsService {
     // Para não guardar o webhook secret plain, regeramos um novo secret,
     // atualizamos o hash e reenfileiramos o job de criação (controller decide).
     await this.updateStatus(session.id, 'connecting');
+
+    // 🔒 Gera novo webhook secret e re-aplica na Evolution para garantir
+    // que o webhook configurado usa a lista ATUAL de WEBHOOK_EVENTS.
+    // A Evolution mantém o webhook configurado da última vez — se trocamos
+    // a lista em deploy (ex.: cortamos PRESENCE_UPDATE/CONTACTS_UPSERT),
+    // instâncias antigas continuam com a lista velha. Aqui regeneramos
+    // o secret, atualizamos o hash no DB e reaplicamos via setWebhook().
+    const webhook = await this.generateWebhookSecret();
+    await this.prisma.whatsappSession.update({
+      where: { id: session.id },
+      data: { webhookSecretHash: webhook.hash },
+    });
+    await this.reapplyWebhook(session.sessionName, webhook.plain);
+
     try {
       await this.evolution.connect(session.sessionName);
       await this.updateStatus(session.id, 'qrcode_pending');
@@ -414,14 +554,12 @@ export class WhatsappSessionsService {
     } catch (err) {
       if (err instanceof NotFoundException) {
         // A instância foi deletada na Evolution. Precisamos recriar.
-        // Regeramos o webhook secret (perdemos o plain anterior — OK, é edge case).
-        const webhook = await this.generateWebhookSecret();
+        // Já geramos novo webhook secret acima — usamos ele aqui também.
         await this.prisma.whatsappSession.update({
           where: { id: session.id },
-          data: { webhookSecretHash: webhook.hash, evolutionInstanceId: null },
+          data: { evolutionInstanceId: null },
         });
         // Devolvemos um "ticket" para o controller reenfileirar o job.
-        // Como o service não tem acesso ao queue, usamos um retorno especial.
         this.logger.warn(
           `reconnect: instância ${session.sessionName} não existe mais — recriação necessária`,
         );
@@ -429,6 +567,28 @@ export class WhatsappSessionsService {
         throw new ReconnectNeedsRecreateException(webhook.plain);
       }
       throw err;
+    }
+  }
+
+  /**
+   * 🔒 Re-aplica o webhook na Evolution com a lista ATUAL de WEBHOOK_EVENTS.
+   * Chamado em reconexões pra garantir que instâncias existentes usem
+   * a lista nova (após deploys que cortaram eventos).
+   */
+  private async reapplyWebhook(sessionName: string, webhookSecretPlain: string): Promise<void> {
+    try {
+      await this.evolution.setWebhook(sessionName, {
+        url: this.evolution.buildWebhookUrl(),
+        signatureHeader: { 'x-evolution-signature': webhookSecretPlain },
+      });
+      this.logger.log(
+        `reapplyWebhook(${sessionName}): webhook reconfigurado com lista atual de eventos`,
+      );
+    } catch (err) {
+      // Falha aqui NÃO bloqueia reconexão — só logamos.
+      this.logger.warn(
+        `reapplyWebhook(${sessionName}) falhou: ${(err as Error).message} — reconexão segue mesmo assim`,
+      );
     }
   }
 
@@ -467,13 +627,14 @@ export class WhatsappSessionsService {
       }
     }
 
-    // Marca status como qrcode_pending e zera o phone — o próximo QR
+    // Marca status como qrcode_pending e zera o phone/profileName — o próximo QR
     // pode ser escaneado por outro número, então não faz sentido manter.
     await this.prisma.whatsappSession.update({
       where: { id: session.id },
       data: {
         status: 'qrcode_pending',
         phone: null,
+        profileName: null,
         lastSeen: new Date(),
       },
     });
@@ -529,14 +690,19 @@ export class WhatsappSessionsService {
    *
    * 🔒 S23 — Garante que o `phone` esteja sincronizado com a Evolution: se
    * vier vazio do webhook, NÃO zeramos o phone existente (podemos estar
-   * reprocessando um evento parcial).
+   * reprocessando um evento parcial). profileName segue a mesma regra.
    */
-  async markConnected(sessionId: string, phone?: string) {
+  async markConnected(
+    sessionId: string,
+    phone?: string,
+    profileName?: string | null,
+  ) {
     const update = await this.prisma.whatsappSession.update({
       where: { id: sessionId },
       data: {
         status: 'connected',
         ...(phone ? { phone } : {}),
+        ...(profileName ? { profileName } : {}),
         lastSeen: new Date(),
       },
       select: { id: true, status: true, phone: true, tenantId: true, name: true },
@@ -545,7 +711,7 @@ export class WhatsappSessionsService {
     await this.logEvent(sessionId, update.tenantId, 'connected', {
       phone,
       message: phone
-        ? `Sessão conectada com o número ${phone}`
+        ? `Sessão conectada com o número ${phone}${profileName ? ` (${profileName})` : ''}`
         : 'Sessão conectada',
     });
     return update;

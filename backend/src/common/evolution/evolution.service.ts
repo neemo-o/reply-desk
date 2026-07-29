@@ -58,19 +58,34 @@ export class EvolutionService {
   }
 
   /**
-   * Eventos padrão que queremos receber da Evolution para sincronizar estado.
-   * Documentados em `/api-reference/events-events` (Evolution API v2).
+   * Eventos que o ReplyDesk recebe da Evolution.
+   *
+   * Apenas 4 eventos — o suficiente para o fluxo "QR → conectado → recebe
+   * mensagens privadas → placeholder → desconecta". Os outros eventos
+   * (PRESENCE_UPDATE, CONTACTS_UPSERT, MESSAGES_UPDATE, MESSAGES_DELETE,
+   * SEND_MESSAGE) foram intencionalmente removidos por dois motivos:
+   *
+   *  1. **Privacidade** — não queremos que a Evolution envie por webhook
+   *     informações sobre a agenda de contatos, status online/digitando,
+   *     edições de mensagens etc. do usuário. Esses eventos só servem para
+   *     feature sociais que não fazem parte do produto.
+   *  2. **Performance** — esses eventos geravam alto volume de POSTs por
+   *     minuto (ex.: 70 PRESENCE_UPDATE + 46 MESSAGES_UPDATE + 28
+   *     CONTACTS_UPSERT por sessão em atividade), o que estourou o
+   *     rate limiter do endpoint /webhooks/evolution (HTTP 429).
+   *
+   * Se no futuro o produto precisar de algum evento novo (ex.: receber
+   * edições de mensagem para reconstruir histórico), basta adicioná-lo aqui
+   * e fazer rebuild do backend — o `createInstance()` e `setWebhook()`
+   * usam essa constante automaticamente.
+   *
+   * Referência Evolution API v2: `/api-reference/events-events`.
    */
   static readonly WEBHOOK_EVENTS = [
-    'APPLICATION_STARTUP',
-    'QRCODE_UPDATED',
-    'CONNECTION_UPDATE',
-    'MESSAGES_UPSERT',
-    'MESSAGES_UPDATE',
-    'MESSAGES_DELETE',
-    'SEND_MESSAGE',
-    'CONTACTS_UPSERT',
-    'PRESENCE_UPDATE',
+    'APPLICATION_STARTUP', // 🔌 Evolution reiniciou — apenas atualiza lastSeen
+    'QRCODE_UPDATED',      // 🔌 QR gerado/atualizado — frontend busca sob demanda
+    'CONNECTION_UPDATE',   // 🔌 conectado/desconectado/connecting — essencial p/ status
+    'MESSAGES_UPSERT',     // 📨 mensagem recebida (privado, !fromMe) — fluxo principal
   ] as const;
 
   /**
@@ -190,18 +205,56 @@ export class EvolutionService {
   /**
    * Consulta o estado atual da instância na Evolution.
    * Retorna o estado low-level (`state`) e, se conectado, o número.
+   *
+   * 🔒 A Evolution API v2 (builds recentes) aceita a consulta de duas formas:
+   *   - GET /instance/fetchInstances?instanceName=<name>   (query string)
+   *   - GET /instance/fetchInstances/{name}                (path — funciona em builds antigos)
+   * Alguns builds retornam 404 em uma das duas; tentamos query-string primeiro
+   * (que é a forma documentada em builds recentes) e caímos para path se 404.
    */
   async fetchInstance(instanceName: string): Promise<{
     instance?: { id: string; name: string; state: string; connection: string };
     data?: unknown;
   }> {
-    // fetchInstances suporta query ?instanceName=<name> em algumas builds.
-    // Tentamos pelo caminho mais robusto: /instance/fetchInstances
-    const data = await this.call<{ data?: unknown }>(
+    this.assertConfigured();
+    const headers: Record<string, string> = {
+      apikey: this.apiKey as string,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    };
+
+    // 1ª tentativa: query string (documentada em builds recentes).
+    try {
+      const url = `${this.baseUrl}/instance/fetchInstances?instanceName=${encodeURIComponent(instanceName)}`;
+      const resp = await fetch(url, { method: 'GET', headers });
+      if (resp.ok) {
+        const json = (await resp.json()) as unknown;
+        // Algumas builds envelopam em { data: [...] } ou devolvem array direto.
+        // Quando é array, pegamos o primeiro item (já filtrado por ?instanceName=).
+        if (Array.isArray(json)) return { data: json[0] ?? null };
+        return json as { data?: unknown };
+      }
+      // Se não for 404, propaga como erro genérico (não tenta fallback).
+      if (resp.status !== 404) {
+        throw new BadGatewayException(
+          `Evolution API respondeu ${resp.status} ${resp.statusText}`,
+        );
+      }
+      this.logger.debug(
+        `fetchInstance(${instanceName}): query-string → 404; tentando path…`,
+      );
+    } catch (err) {
+      // Erros de rede ou BadGateway (≠ 404) devem propagar; 404 cai no path legacy.
+      if (err instanceof BadGatewayException) throw err;
+      this.logger.debug(
+        `fetchInstance(${instanceName}): query-string falhou (${(err as Error).message}); tentando path…`,
+      );
+    }
+    // 2ª tentativa: path legado (/instance/fetchInstances/{name}).
+    return this.call<{ data?: unknown }>(
       'GET',
       `/instance/fetchInstances/${encodeURIComponent(instanceName)}`,
     );
-    return data;
   }
 
   /**

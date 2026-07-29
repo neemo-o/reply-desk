@@ -13,6 +13,8 @@ export interface WhatsappSession {
   tenantId?: string;
   name: string;
   phone?: string | null;
+  /** Nome do perfil do WhatsApp (exibido ao lado do número quando existir). */
+  profileName?: string | null;
   sessionName: string;
   evolutionInstanceId?: string | null;
   status: SessionStatus;

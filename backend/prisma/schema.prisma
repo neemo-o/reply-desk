@@ -202,6 +202,9 @@ model WhatsappSession {
   tenantId            String    @map("tenant_id")
   name                String
   phone               String?
+  /// Nome do perfil do WhatsApp conectado (vindo do webhook CONNECTION_UPDATE
+  /// ou do fallback fetchInstance). Exibido na UI ao lado do número quando existe.
+  profileName         String?   @map("profile_name")
   sessionName         String    @map("session_name")
   evolutionInstanceId String?   @map("evolution_instance_id")
   status              String    @default("disconnected")

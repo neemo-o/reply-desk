@@ -337,11 +337,14 @@ function SessionTableRow({
       <TableCell className="font-medium">{session.name}</TableCell>
       {showSensitive && (
         <TableCell className="text-muted-foreground">
-          {session.phone ? (
-            <span className="font-mono text-xs">{formatPhone(session.phone)}</span>
-          ) : (
-            <span className="text-muted-foreground/60">— sem número</span>
-          )}
+          {(() => {
+            const display = formatPhoneWithProfile(session.phone, session.profileName);
+            return display ? (
+              <span className="font-mono text-xs">{display}</span>
+            ) : (
+              <span className="text-muted-foreground/60">— sem número</span>
+            );
+          })()}
         </TableCell>
       )}
       <TableCell>
@@ -374,6 +377,25 @@ function formatPhone(phone: string): string {
     return `${partA}-${partB}`;
   }
   return phone;
+}
+
+/**
+ * Renderiza o número conectado da sessão, opcionalmente com o nome do
+ * perfil entre parênteses quando existir.
+ *   - "75 9 1234-5678 (Empresa XY)"   → tem phone + profileName
+ *   - "75 9 1234-5678"                  → só phone
+ *   - undefined                         → sem phone
+ */
+function formatPhoneWithProfile(
+  phone?: string | null,
+  profileName?: string | null,
+): string | undefined {
+  if (!phone) return undefined;
+  const formatted = formatPhone(phone);
+  const trimmedName = profileName?.trim();
+  return trimmedName && trimmedName.length > 0
+    ? `${formatted} (${trimmedName})`
+    : formatted;
 }
 
 // ─── detalhe da sessão (QR + ações + logs de conexão) dentro do Sheet ─
@@ -462,7 +484,10 @@ function SessionDetail({
           {canManage && (
             <DetailRow
               label="Número conectado"
-              value={session.phone ? formatPhone(session.phone) : "— ainda não conectado"}
+              value={
+                formatPhoneWithProfile(session.phone, session.profileName)
+                  ?? "— ainda não conectado"
+              }
             />
           )}
           {canManage && (

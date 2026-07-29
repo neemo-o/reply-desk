@@ -126,17 +126,24 @@ services:
           DATABASE_PROVIDER: postgresql
           DATABASE_CONNECTION_URI: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-whatsapp_saas}?schema=evolution_api
           DATABASE_CONNECTION_CLIENT_NAME: evolution_exchange
-          # 🔒 Dados de instância, mensagens, contatos, chats salvos no DB
+          # 🔒 Persistência MÍNIMA na Evolution: apenas o que o ReplyDesk usa.
+          # Por padrão a Evolution tenta salvar TODA a agenda de contatos,
+          # chats, histórico de mensagens, edições, labels, status "online"
+          # dos últimos 7 dias — informação privada do usuário que não nos
+          # serve para nada. Mantemos só:
+          #   - INSTANCE   → metadata da instância (obrigatório p/ gestão)
+          #   - NEW_MESSAGE → mensagem nova (a Evolution expõe a referência;
+          #                   quem persiste de fato é o nosso webhook, e
+          #                   manter isso ajuda em debug pós-restart)
+          # Tudo abaixo é desligado:
           DATABASE_SAVE_DATA_INSTANCE: "true"
           DATABASE_SAVE_DATA_NEW_MESSAGE: "true"
-          DATABASE_SAVE_MESSAGE_UPDATE: "true"
-          DATABASE_SAVE_DATA_CONTACTS: "true"
-          DATABASE_SAVE_DATA_CHATS: "true"
-          DATABASE_SAVE_DATA_LABELS: "true"
-          DATABASE_SAVE_DATA_HISTORIC: "true"
-          DATABASE_SAVE_IS_ON_WHATSAPP: "true"
-          DATABASE_SAVE_IS_ON_WHATSAPP_DAYS: "7"
-          DATABASE_DELETE_MESSAGE: "true"
+          DATABASE_SAVE_MESSAGE_UPDATE: "false"
+          DATABASE_SAVE_DATA_CONTACTS: "false"
+          DATABASE_SAVE_DATA_CHATS: "false"
+          DATABASE_SAVE_DATA_LABELS: "false"
+          DATABASE_SAVE_DATA_HISTORIC: "false"
+          DATABASE_SAVE_IS_ON_WHATSAPP: "false"
           # 🔴 Redis — Evolution usa CACHE_REDIS_URI para cache
           CACHE_REDIS_ENABLED: "true"
           CACHE_REDIS_URI: redis://redis:6379/6

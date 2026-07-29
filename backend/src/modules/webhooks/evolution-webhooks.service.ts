@@ -83,8 +83,17 @@ export class EvolutionWebhooksService {
       return { ok: true };
     }
 
-    this.logger.debug(
-      `[${normalizedEvent}] session=${session.id} tenant=${session.tenantId} state=${session.status}`,
+    // 🪵 Log do evento para diagnóstico de formato. CONNECTION_UPDATE é o
+    // mais importante: é onde o phone precisa chegar. Se o número não
+    // aparecer na tabela, esse log mostra exatamente que campo a Evolution
+    // preencheu. Outros eventos (MESSAGES_UPSERT) ficam em debug para não
+    // inundar stdout; CONNECTION_UPDATE fica em WARN/INFO porque é raro.
+    const isConnectionEvent =
+      normalizedEvent === 'CONNECTION_UPDATE' || normalizedEvent === 'APPLICATION_STARTUP';
+    (isConnectionEvent ? this.logger.warn : this.logger.debug).call(
+      this.logger,
+      `[${normalizedEvent}] session=${session.id} tenant=${session.tenantId} ` +
+        `state=${session.status} data=${JSON.stringify(raw.data ?? null).slice(0, 600)}`,
     );
 
     switch (normalizedEvent) {
@@ -115,22 +124,13 @@ export class EvolutionWebhooksService {
       case 'MESSAGES_UPSERT':
         await this.onMessagesUpsert(session, raw.data);
         break;
-      case 'MESSAGES_UPDATE':
-      case 'MESSAGES_DELETE':
-      case 'SEND_MESSAGE':
-        // 🔌 TODO: marcar mensagens enviadas como ACK no banco.
-        this.logger.debug(
-          `[${normalizedEvent}] message ack event para sessão ${session.id} — TBD`,
-        );
-        break;
-      case 'CONTACTS_UPSERT':
-      case 'PRESENCE_UPDATE':
-        // informações auxiliares — podemos enriquecer contatos no futuro.
-        this.logger.debug(`[${normalizedEvent}] auxiliar event, sem ação persistida`);
-        break;
       default:
         // 🔒 M20 — Loga em `warn` (não `debug`) para facilitar diagnóstico
         // quando a Evolution enviar um evento novo que ainda não mapeamos.
+        // OBS: A lista de eventos esperada vem de EvolutionService.WEBHOOK_EVENTS
+        // (atualmente: APPLICATION_STARTUP, QRCODE_UPDATED, CONNECTION_UPDATE,
+        // MESSAGES_UPSERT). Qualquer outro aqui significa (a) Evolution
+        // adicionou um evento novo, ou (b) assinatura divergente.
         this.logger.warn(`[${normalizedEvent}] evento não mapeado (original="${event}") — ignorado`);
     }
 
@@ -168,19 +168,66 @@ export class EvolutionWebhooksService {
 
     // 🔒 S23 — Captura robusta do phone: a Evolution pode enviá-lo em vários
     // formatos dependendo do build e do integration (Baileys, etc.):
-    //   - data.wid.user              (formato Baileys clássico)
+    //   - data.wid.user              (formato Baileys clássico, objeto)
+    //   - data.wid                   (string "5511999999999@s.whatsapp.net")
     //   - data.user                  (alguns builds)
     //   - data.number                 (Evolution API v2 normalizado)
     //   - data.phoneNumber.id        (formato alternativo)
+    //   - data.instance.phone        (formato fetchInstances)
+    //   - data.wuid                   (Evolution API v2 + Baileys atual — formato
+    //                                  "557591722837@s.whatsapp.net"; observado
+    //                                  em produção quando wid vem vazio)
+    //   - data.ownerJid               (alguns builds; mesmo formato do wuid)
     // Não usamos data.id (esse é o event id, não o número).
-    const wid = d.wid as Record<string, unknown> | undefined;
+    const wid = d.wid as Record<string, unknown> | string | undefined;
     const phoneNumber = d.phoneNumber as Record<string, unknown> | undefined;
+    const instance = d.instance as Record<string, unknown> | undefined;
+    const widUser = typeof wid === 'object' ? (wid?.user as string | undefined) : undefined;
+    // wid como string? extrai a parte antes do @s.whatsapp.net
+    const widString = typeof wid === 'string' ? wid.split('@')[0].replace(/\D/g, '') : undefined;
+    // wuid / ownerJid são strings no formato "<phone>@s.whatsapp.net" — extrai só dígitos.
+    const wuidString =
+      typeof d.wuid === 'string'
+        ? (d.wuid as string).split('@')[0].replace(/\D/g, '')
+        : undefined;
+    const ownerJidString =
+      typeof d.ownerJid === 'string'
+        ? (d.ownerJid as string).split('@')[0].replace(/\D/g, '')
+        : undefined;
     const phone =
-      (wid?.user as string | undefined) ??
+      widUser ??
+      widString ??
+      wuidString ??
+      ownerJidString ??
       (d.user as string | undefined) ??
       (d.number as string | undefined) ??
       (phoneNumber?.id as string | undefined) ??
-      (phoneNumber?.user as string | undefined);
+      (phoneNumber?.user as string | undefined) ??
+      (instance?.phone as string | undefined);
+
+    // 🔒 Profile name — vem em data.profileName quando a Evolution envia
+    // junto com state=open (ex.: "Empresa XY"). Limpa whitespace e descarta
+    // strings vazias para não gravar " " no banco.
+    const rawProfileName =
+      (d.profileName as string | undefined) ??
+      (d.profile_name as string | undefined) ??
+      ((d.profile as Record<string, unknown> | undefined)?.name as string | undefined);
+    const profileName =
+      typeof rawProfileName === 'string' && rawProfileName.trim().length > 0
+        ? rawProfileName.trim()
+        : null;
+
+    // 🪵 Diagnóstico: quando a Evolution diz state=open mas o phone não veio
+    // em nenhum dos formatos mapeados, logamos o payload cru `data` em `warn`.
+    // Sem isso não dá pra saber que campo novo a API usou — e o usuário pega
+    // só "— sem número" na tabela sem entender o motivo.
+    const stateLower = state.toLowerCase();
+    if ((stateLower === 'open' || stateLower === 'connected') && !phone) {
+      this.logger.warn(
+        `session ${session.id}: CONNECTION_UPDATE state="${state}" sem phone detectável! ` +
+        `Payload cru data=${JSON.stringify(data).slice(0, 800)}`,
+      );
+    }
 
     // 🔒 M20 — A Evolution expõe o motivo do disconnect em campos irmãos a `state`.
     // Quando o WhatsApp remove o dispositivo (ex.: você escaneou o QR em outro
@@ -195,8 +242,11 @@ export class EvolutionWebhooksService {
     switch (state.toLowerCase()) {
       case 'open':
       case 'connected': {
-        await this.sessionsService.markConnected(session.id, phone);
-        this.logger.log(`session ${session.id} → connected (phone=${phone ?? '-'})`);
+        await this.sessionsService.markConnected(session.id, phone, profileName);
+        this.logger.log(
+          `session ${session.id} → connected ` +
+          `(phone=${phone ?? '-'} profileName=${profileName ?? '-'})`,
+        );
         break;
       }
       case 'close':
