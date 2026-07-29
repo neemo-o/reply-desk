@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   HttpCode,
   HttpStatus,
@@ -16,18 +17,34 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import type { Request } from 'express';
 import { WhatsappSessionsService, ReconnectNeedsRecreateException } from './whatsapp-sessions.service';
+import { ContactFilterService } from './contact-filter.service';
 import { CreateSessionDto } from './dto/create-session.dto';
+import { UpdateSessionSettingsDto } from './dto/update-session-settings.dto';
+import {
+  AddContactToListDto,
+  CONTACT_LISTS,
+  CreateContactDto,
+  type ContactList,
+} from './dto/add-contact-to-list.dto';
 import { TenantGuard } from '../../common/guards/tenant.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentTenant } from '../../common/decorators/current-tenant.decorator';
 import { SESSION_QUEUE } from '../queue/queue.module';
-import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { ContactsService } from '../contacts/contacts.service';
+import { IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 
 class ListSessionsQuery {
   @IsOptional() @IsString() cursor?: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) take?: number;
+}
+
+class ListContactsQuery {
+  @IsOptional() @IsString() cursor?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(500) take?: number;
+  @IsIn(CONTACT_LISTS)
+  list: ContactList;
 }
 
 /**
@@ -49,7 +66,8 @@ class ListSessionsQuery {
  *                   (sessionName, evolutionInstanceId, phone).
  *
  * Rotas (`api/v1` prefix global):
- *   POST   /whatsapp/sessions                  cria sessão [owner,admin]
+ *   POST   /whatsapp/sessions                  cria sessão [owner,admin] — SEM enfileirar QR
+ *   POST   /whatsapp/sessions/:id/connect      enfileira QR [owner,admin] — gate: exige bot
  *   GET    /whatsapp/sessions                  lista sessões (owner/admin=completo; agent=safe)
  *   GET    /whatsapp/sessions/:id              detalhe [owner,admin]; agent=safe
  *   GET    /whatsapp/sessions/:id/qr          busca QR atual na Evolution [owner,admin]
@@ -58,6 +76,15 @@ class ListSessionsQuery {
  *   POST   /whatsapp/sessions/:id/reconnect   reconecta sessão [owner,admin]
  *   POST   /whatsapp/sessions/:id/logout      desconecta e regenera QR [owner,admin]
  *   PATCH  /whatsapp/sessions/:id/disconnect  ⚠️ compat = /logout [owner,admin]
+ *   PATCH  /whatsapp/sessions/:id/settings    atualiza config (filtro + bot) [owner,admin]
+ *   GET    /whatsapp/sessions/:id/settings    lê config atual [owner,admin]
+ *   GET    /whatsapp/sessions/:id/settings/contacts?list=whitelist|blacklist
+ *                                              lista contatos da whitelist/blacklist [owner,admin]
+ *   POST   /whatsapp/sessions/:id/settings/contacts
+ *                                              adiciona contato a uma lista [owner,admin]
+ *   DELETE /whatsapp/sessions/:id/settings/contacts/:itemId
+ *                                              remove contato da lista [owner,admin]
+ *   POST   /contacts                           cria/upsert contato manual (por número) [owner,admin]
  *   DELETE /whatsapp/sessions/:id              deleta permanente [owner,admin]
  *
  * 🔒 M6 — SubscriptionGuard agora é global (APP_GUARD em AppModule).
@@ -67,6 +94,8 @@ class ListSessionsQuery {
 export class WhatsappSessionsController {
   constructor(
     private readonly sessionsService: WhatsappSessionsService,
+    private readonly contactFilter: ContactFilterService,
+    private readonly contactsService: ContactsService,
     @InjectQueue(SESSION_QUEUE) private readonly sessionQueue: Queue,
   ) {}
 
@@ -79,18 +108,52 @@ export class WhatsappSessionsController {
   }
 
   /**
-   * Cria a sessão no banco e enfileira job BullMQ `connect-session`.
-   * O worker no processo separado chama EvolutionService.createInstance +
-   * EvolutionService.connect para iniciar o QR.
+   * Cria a sessão no banco + SessionSettings. NÃO enfileira conexão —
+   * o frontend chama POST /:id/connect depois (botão "Conectar / Gerar QR").
    *
-   * 🔒 S23 — Apenas owner e admin podem criar sessões.
+   * 🔒 S24 — O DTO exige `activeBotId`. O service valida que o bot
+   * está publicado e pertence ao tenant; se não, BadRequest com mensagem
+   * clara explicando o que falta (frontend mostra no formulário).
    */
   @Post()
   @Roles('owner', 'admin')
   async create(@CurrentTenant() tenantId: string, @Body() dto: CreateSessionDto) {
-    const { session, webhookSecret } = await this.sessionsService.create(tenantId, dto);
-    // Enfileira job de conexão — worker processa.
-    // Passamos webhookSecret no job (não persistente em DB além do hash).
+    const { session } = await this.sessionsService.create(tenantId, dto);
+    // 🔒 S24 — não enfileiramos o connect-session automaticamente; o owner
+    // vê a sessão criada (status='connecting' com settings prontos) e
+    // chama /:id/connect quando quiser o QR.
+    return session;
+  }
+
+  /**
+   * 🔒 S24 — Gate de conexão (botão "Gerar QR Code" na UI).
+   *
+   * Só enfileira `connect-session` se a sessão tiver:
+   *  - bot ativo (SessionSettings.activeBotId) — se não tiver, BadRequest.
+   *  - bot referenciado continua publicado — revalida para evitar race.
+   *
+   * Se a config não estiver OK, devolve 400 com a razão; o frontend
+   * desabilita o botão quando lista whitelist vazia + modo=blacklist
+   * (mostrar mensagem "Adicione ao menos um contato à blacklist") ou
+   * sem bot (mostrar "Crie e selecione um bot publicado").
+   */
+  @Post(':id/connect')
+  @HttpCode(HttpStatus.OK)
+  @Roles('owner', 'admin')
+  async connect(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+    @Req() req: Request,
+  ) {
+    const role = this.getRole(req);
+    if (role !== 'owner' && role !== 'admin') {
+      throw new ForbiddenException('Apenas owner/admin podem conectar sessões');
+    }
+
+    // O service revalida bot publicado + retorna o webhook secret plain
+    // (precisamos dele pra passar ao worker).
+    const { session, webhookSecret } = await this.sessionsService.startConnect(tenantId, id);
+
     await this.sessionQueue.add(
       'connect-session',
       { sessionId: session.id, tenantId, webhookSecret },
@@ -102,8 +165,7 @@ export class WhatsappSessionsController {
         backoff: { type: 'exponential', delay: 2000 },
       },
     );
-    // Não devolvemos o webhookSecret ao frontend — ele é secreto entre
-    // backend e Evolution API.
+
     return session;
   }
 
@@ -264,5 +326,99 @@ export class WhatsappSessionsController {
   @Roles('owner', 'admin')
   remove(@CurrentTenant() tenantId: string, @Param('id') id: string) {
     return this.sessionsService.delete(tenantId, id);
+  }
+
+  // ======================================================================
+  // 🔒 S24 — Endpoints de configuração da sessão (filtro + bot + listas)
+  // ======================================================================
+
+  /**
+   * GET /whatsapp/sessions/:id/settings
+   * Retorna o SessionSettings completo. Usado pela UI para preencher
+   * o formulário de configurações da sessão.
+   */
+  @Get(':id/settings')
+  @Roles('owner', 'admin')
+  getSettings(@CurrentTenant() tenantId: string, @Param('id') id: string) {
+    return this.sessionsService.getSettings(tenantId, id);
+  }
+
+  /**
+   * PATCH /whatsapp/sessions/:id/settings
+   * Atualiza configurações (filtro de contatos + bot ativo). NÃO
+   * reconecta a sessão — o filtro passa a valer no próximo inbound.
+   */
+  @Patch(':id/settings')
+  @Roles('owner', 'admin')
+  updateSettings(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+    @Body() dto: UpdateSessionSettingsDto,
+  ) {
+    return this.sessionsService.updateSettings(tenantId, id, dto);
+  }
+
+  /**
+   * GET /whatsapp/sessions/:id/settings/contacts?list=whitelist|blacklist
+   * Lista contatos de uma das listas da sessão (paginada por cursor).
+   */
+  @Get(':id/settings/contacts')
+  @Roles('owner', 'admin')
+  listContacts(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+    @Query() q: ListContactsQuery,
+  ) {
+    return this.contactFilter.listContacts(tenantId, id, q.list, {
+      take: q.take,
+      cursor: q.cursor,
+    });
+  }
+
+  /**
+   * POST /whatsapp/sessions/:id/settings/contacts
+   * Adiciona um contato a uma lista (whitelist ou blacklist). O contato
+   * precisa existir e ser do mesmo tenant — criar via POST /contacts se
+   * não existir.
+   */
+  @Post(':id/settings/contacts')
+  @Roles('owner', 'admin')
+  addContactToList(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+    @Body() dto: AddContactToListDto,
+  ) {
+    return this.contactFilter.addContact(tenantId, id, dto);
+  }
+
+  /**
+   * DELETE /whatsapp/sessions/:id/settings/contacts/:itemId
+   * Remove um contato de uma lista. Não deleta o contato em si.
+   */
+  @Delete(':id/settings/contacts/:itemId')
+  @HttpCode(HttpStatus.OK)
+  @Roles('owner', 'admin')
+  removeContactFromList(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+  ) {
+    return this.contactFilter.removeContact(tenantId, id, itemId);
+  }
+
+  /**
+   * POST /contacts
+   * Cria (ou faz upsert de) um contato a partir de um número. Usado
+   * quando o owner quer adicionar à blacklist alguém que AINDA NÃO
+   * mandou mensagem — sem esse endpoint o contato só existe depois
+   * da primeira mensagem (criado no webhook).
+   */
+  @Post('contacts')
+  @Roles('owner', 'admin')
+  createContact(@CurrentTenant() tenantId: string, @Body() dto: CreateContactDto) {
+    return this.contactsService.upsertByPhone(tenantId, dto.phone, {
+      name: dto.name,
+      notes: dto.notes,
+    });
   }
 }

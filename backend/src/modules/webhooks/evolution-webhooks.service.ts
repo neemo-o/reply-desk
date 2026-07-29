@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { EvolutionService } from '../../common/evolution/evolution.service';
 import { WhatsappSessionsService } from '../whatsapp-sessions/whatsapp-sessions.service';
+import { ContactFilterService } from '../whatsapp-sessions/contact-filter.service';
 
 /**
  * 🔒 EvolutionWebhooksService — processa eventos de webhook recebidos da
@@ -34,9 +35,10 @@ export class EvolutionWebhooksService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly sessionsService: WhatsappSessionsService,
     private readonly evolution: EvolutionService,
     private readonly config: ConfigService,
+    private readonly sessionsService: WhatsappSessionsService,
+    private readonly contactFilter: ContactFilterService,
   ) {}
 
   /**
@@ -388,31 +390,49 @@ export class EvolutionWebhooksService {
     const ts = d.messageTimestamp as number | undefined;
     const timestamp = ts ? new Date(ts * 1000) : new Date();
 
-    // Upsert contato + conversa + mensagem numa transação
+    // 🔒 S24 — Filtro de contatos (whitelist/blacklist).
+    // Fluxo: garantir que o contato EXISTE (upsert leve), depois consultar
+    // o filtro da sessão. Se filtrado → log + return ANTES de criar
+    // conversa/mensagem (a mensagem nem entra no DB, conforme decisão).
+    let contactId: string;
+    try {
+      const contact = await this.prisma.contact.upsert({
+        where: { tenantId_phone: { tenantId: session.tenantId, phone } },
+        create: {
+          tenantId: session.tenantId,
+          phone,
+          ...(pushName ? { name: pushName } : {}),
+        },
+        update: {
+          ...(pushName ? { name: pushName } : {}),
+        },
+        select: { id: true },
+      });
+      contactId = contact.id;
+    } catch (err) {
+      this.logger.error(
+        `onMessagesUpsert: falha ao upsert contact de ${phone}: ${(err as Error).message}`,
+      );
+      return;
+    }
+
+    const passes = await this.contactFilter.shouldRespondTo(session.id, contactId);
+    if (!passes) {
+      this.logger.log(
+        `🚫 inbound filtrado: session=${session.id} phone=${phone} contactId=${contactId}`,
+      );
+      return;
+    }
+
+    // Upsert conversa + mensagem numa transação
     let conversationId: string | null = null;
     let messageWasCreated = false;
     try {
-      const result = await this.prisma.$transaction(async (tx) => {
-        // Upsert contato por (tenantId, phone). Criamos sem nome se não houver
-        // pushName — uma futura tool de enriquecimento pode preencher depois.
-        const contact = await tx.contact.upsert({
-          where: { tenantId_phone: { tenantId: session.tenantId, phone } },
-          create: {
-            tenantId: session.tenantId,
-            phone,
-            ...(pushName ? { name: pushName } : {}),
-          },
-          update: {
-            // Atualiza o nome se a Evolution nos deu um pushName novo.
-            ...(pushName ? { name: pushName } : {}),
-          },
-          select: { id: true, name: true },
-        });
-
+      const result = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         // Busca conversa existente aberta para session+contact, ou cria.
         const ua: Prisma.ConversationWhereInput = {
           sessionId: session.id,
-          contactId: contact.id,
+          contactId,
           // Apenas conversas não-arquivadas (status != 'closed').
           status: { not: 'closed' },
         };
@@ -425,7 +445,7 @@ export class EvolutionWebhooksService {
           conversation = await tx.conversation.create({
             data: {
               tenantId: session.tenantId,
-              contactId: contact.id,
+              contactId,
               sessionId: session.id,
               status: 'open',
               lastMessageAt: timestamp,
@@ -440,8 +460,6 @@ export class EvolutionWebhooksService {
         }
 
         // Idempotência: externalId único por (conversationId, externalId).
-        // Se já houver mensagem com esse externalId, skip — Evolution pode
-        // reenviar o mesmo evento em retry.
         let message: { id: string } | null = null;
         let created = false;
         if (externalId) {
@@ -465,7 +483,7 @@ export class EvolutionWebhooksService {
           });
           created = true;
         }
-        return { conversationId: conversation.id, message, created, contactName: contact.name };
+        return { conversationId: conversation.id, message, created };
       }, { timeout: 8000 });
 
       conversationId = result.conversationId;
@@ -474,7 +492,7 @@ export class EvolutionWebhooksService {
       // 🪵 Log estruturado (temporário) — o que o usuário pediu para "logar temporariamente".
       this.logger.log(
         `📨 inbound session=${session.id} tenant=${session.tenantId} ` +
-        `phone=${phone} name=${result.contactName ?? '-'} ` +
+        `phone=${phone} ` +
         `text=${JSON.stringify(text ?? `[${msg ? Object.keys(msg)[0] : 'unknown'}]`).slice(0, 280)} ` +
         `conv=${conversationId} ${messageWasCreated ? '(new)' : '(dup)'}`,
       );
@@ -500,10 +518,13 @@ export class EvolutionWebhooksService {
   private async maybeSendPlaceholder(
     session: { id: string; sessionName: string },
     phone: string,
-    conversationId: string,
+    conversationId: string | null,
     // incomingText apenas p/ log; não usamos para composição do placeholder
     _incomingText: string | null,
   ) {
+    // Se conversationId for null (não chegou aqui por uma transação ok),
+    // ainda assim tentamos enviar — a função persist outbound é opcional.
+    // Não abortamos a operação inteira, só pulamos a persistência.
     const owner = this.config.get<string>('evolution.placeholderOwnerPhone') ?? '';
     const text = this.config.get<string>('evolution.placeholderText') ?? '';
 
@@ -519,20 +540,22 @@ export class EvolutionWebhooksService {
     }
 
     // Persiste a mensagem outbound (placeholder) para o frontend ver no inbox.
-    try {
-      await this.prisma.message.create({
-        data: {
-          conversationId,
-          direction: 'outbound',
-          type: 'text',
-          content: text,
-          status: 'pending',
-          timestamp: new Date(),
-        },
-        select: { id: true },
-      });
-    } catch (err) {
-      this.logger.warn(`maybeSendPlaceholder: não persistiu outbound: ${(err as Error).message}`);
+    if (conversationId) {
+      try {
+        await this.prisma.message.create({
+          data: {
+            conversationId,
+            direction: 'outbound',
+            type: 'text',
+            content: text,
+            status: 'pending',
+            timestamp: new Date(),
+          },
+          select: { id: true },
+        });
+      } catch (err) {
+        this.logger.warn(`maybeSendPlaceholder: não persistiu outbound: ${(err as Error).message}`);
+      }
     }
 
     // Envia via Evolution API. Failure aqui é só logado — não compromete o 200

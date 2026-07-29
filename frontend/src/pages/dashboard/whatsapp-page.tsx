@@ -60,13 +60,18 @@ import {
   useDeleteSession,
   useSessionLogs,
 } from "@/hooks/use-whatsapp";
+import { useBots } from "@/hooks/use-bots";
+import { useConnectSession } from "@/hooks/use-session-settings";
+import { SessionSettingsPanel } from "@/pages/dashboard/session-settings-panel";
 import { whatsappService } from "@/services/whatsapp-service";
 import type {
+  ContactFilterMode,
   SessionEvent,
   SessionEventType,
   SessionStatus,
   WhatsappSession,
 } from "@/types/whatsapp";
+import { CONTACT_FILTER_LABELS } from "@/types/whatsapp";
 import { useAuth } from "@/contexts/auth-provider";
 import { cn } from "@/lib/utils";
 
@@ -579,6 +584,9 @@ function SessionDetail({
         {/* 🪵 S23 — Logs de CONEXÃO (substitui o inbox de mensagens) */}
         {canManage && <ConnectionLogsPanel sessionId={session.id} />}
 
+        {/* 🔒 S24 — Configurações da sessão (bot ativo + filtro + listas) */}
+        {canManage && <SessionSettingsPanel sessionId={session.id} canManage={canManage} />}
+
         {/* 📋 Aviso para agente: sem permissão de ação */}
         {!canManage && (
           <div className="flex items-start gap-2 rounded-lg border border-border bg-secondary/20 p-4 text-sm text-muted-foreground">
@@ -735,15 +743,43 @@ function CreateSessionDialog({
   disabledReason?: string;
 }) {
   const create = useCreateWhatsappSession();
+  const connect = useConnectSession();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
+  const [activeBotId, setActiveBotId] = useState<string>("");
+  const [contactFilterMode, setContactFilterMode] =
+    useState<ContactFilterMode>("none");
+
+  const { data: bots, isLoading: botsLoading } = useBots({ onlyActive: true });
+
+  // Reseta o formulário quando o dialog fecha
+  useEffect(() => {
+    if (open) return;
+    setName("");
+    setActiveBotId("");
+    setContactFilterMode("none");
+  }, [open]);
+
+  const noActiveBots = !botsLoading && (!bots || bots.length === 0);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!activeBotId) return;
     try {
-      // 🔒 S23 — só enviamos `name`; o phone vem automaticamente do webhook
-      await create.mutateAsync({ name });
-      setName("");
+      // 🔒 S24 — cria sessão sem enfileirar connect-session; o owner chama
+      // POST /:id/connect (botão "Conectar") quando quiser o QR.
+      const created = await create.mutateAsync({
+        name,
+        activeBotId,
+        contactFilterMode,
+      });
+      // Já dispara o connect para já mostrar QR (UX similar ao fluxo antigo)
+      try {
+        await connect.mutateAsync(created.id);
+      } catch {
+        /* toast já tratado no hook; a sessão foi criada, o owner pode
+           conectar pela tela de detalhes depois. */
+      }
       setOpen(false);
     } catch {
       /* toast já tratado no hook */
@@ -787,8 +823,58 @@ function CreateSessionDialog({
               Dica: dê um nome que identifique o uso desta sessão (ex.: “Suporte”, “Vendas”).
             </p>
           </div>
-          {/* 🔒 S23 — Campo de telefone removido. O número é detectado
-              automaticamente do celular que escanear o QR Code. */}
+          {/* 🔒 S24 — Bot ativo obrigatório. Só lista bots publicados
+              (status='active'). Se não houver nenhum, orientamos o owner. */}
+          <div className="space-y-1.5">
+            <Label htmlFor="session-bot">Bot ativo</Label>
+            <select
+              id="session-bot"
+              value={activeBotId}
+              onChange={(e) => setActiveBotId(e.target.value)}
+              required
+              disabled={!!noActiveBots}
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <option value="" disabled>
+                {botsLoading
+                  ? "Carregando bots…"
+                  : noActiveBots
+                    ? "Nenhum bot publicado"
+                    : "Selecione um bot publicado"}
+              </option>
+              {bots?.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                  {b.versions?.[0] ? ` (v${b.versions[0].version})` : ""}
+                </option>
+              ))}
+            </select>
+            {noActiveBots && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                Publique um bot antes de criar a sessão. Acesse a página de Bots,
+                crie/edite e publique a versão.
+              </p>
+            )}
+          </div>
+          {/* 🔒 S24 — Modo de filtro de contatos */}
+          <div className="space-y-1.5">
+            <Label htmlFor="session-filter">Filtro de contatos</Label>
+            <select
+              id="session-filter"
+              value={contactFilterMode}
+              onChange={(e) => setContactFilterMode(e.target.value as ContactFilterMode)}
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              {Object.entries(CONTACT_FILTER_LABELS).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground">
+              Pode ser ajustado depois nas configurações da sessão.
+            </p>
+          </div>
           <div className="flex items-start gap-2 rounded-md border border-sky-300/40 bg-sky-50/50 p-3 text-xs text-sky-900 dark:border-sky-800/40 dark:bg-sky-950/30 dark:text-sky-200">
             <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
             <span>
@@ -798,8 +884,11 @@ function CreateSessionDialog({
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <Button type="submit" disabled={create.isPending || !name.trim()}>
-              {create.isPending && <Loader2 className="animate-spin" />}
+            <Button
+              type="submit"
+              disabled={create.isPending || connect.isPending || !name.trim() || !activeBotId}
+            >
+              {(create.isPending || connect.isPending) && <Loader2 className="animate-spin" />}
               Criar sessão
             </Button>
           </AlertDialogFooter>

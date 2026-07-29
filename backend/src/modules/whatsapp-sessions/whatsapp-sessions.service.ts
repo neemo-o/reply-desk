@@ -1,5 +1,6 @@
 import {
   BadGatewayException,
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -81,58 +82,324 @@ export class WhatsappSessionsService {
   /**
    * Cria a sessão no banco e enfileira a conexão (controller pega o queue).
    * Retorna o registro criado SEM QR — o QR vem do job/endpoint especial.
-   *
-   * 🔒 S23 — O DTO `CreateSessionDto` NÃO aceita mais `phone`: o número virá
-   * automaticamente do webhook quando o celular escanear o QR.
-   */
-  async create(tenantId: string, dto: CreateSessionDto) {
-    await this.planLimits.assertCanCreateSession(tenantId);
+   /**
+    * 🔒 S23 — O DTO `CreateSessionDto` NÃO aceita mais `phone`: o número virá
+    * automaticamente do webhook quando o celular escanear o QR.
+    *
+    * 🔒 S24 — Validação de bot + criação de SessionSettings + gate do QR:
+    *   - `activeBotId` é obrigatório (validado no DTO). Aqui checamos que
+    *     o bot existe no MESMO tenant, status='published', e (se vier
+    *     activeBotVersionId) que a versão pertence ao bot.
+    *   - Se o bot não estiver OK → BadRequestException com mensagem clara.
+    *     O frontend trata como erro de formulário e não chega a chamar
+    *     o endpoint de QR.
+    *   - Sessão é criada com `status='connecting'` e `SessionSettings`
+    *     associado (contactFilterMode='none' por default). O job
+    *     `connect-session` SÓ é enfileirado se o caller chamar o endpoint
+    *     de QR depois — separamos criação de conexão (como pediu).
+    */
+   async create(tenantId: string, dto: CreateSessionDto) {
+     await this.planLimits.assertCanCreateSession(tenantId);
 
-    // 🔒 Verifica nomes duplicados dentro do tenant (não DB-unique porque
-    // o user pode recriar com o mesmo nome após deletar; sessionName é único)
-    const existing = await this.prisma.whatsappSession.findFirst({
-      where: { tenantId, name: dto.name },
-      select: { id: true },
-    });
-    if (existing) {
-      throw new ConflictException('Já existe uma sessão com esse nome neste tenant');
-    }
+     // Verifica nomes duplicados dentro do tenant
+     const existing = await this.prisma.whatsappSession.findFirst({
+       where: { tenantId, name: dto.name },
+       select: { id: true },
+     });
+     if (existing) {
+       throw new ConflictException('Já existe uma sessão com esse nome neste tenant');
+     }
 
-    const sessionName = this.buildInstanceName(tenantId);
-    const webhook = await this.generateWebhookSecret();
+     // 🔒 S24 — Validação de bot. Tudo numa transação: se o bot for invalidado
+     // entre o check e o create, abortamos.
+     await this.assertBotReadyForSession(tenantId, dto.activeBotId, dto.activeBotVersionId);
 
-    const session = await this.prisma.whatsappSession.create({
-      data: {
-        tenantId,
-        name: dto.name,
-        // phone NÃO é mais aceito do DTO — preenchido pelo webhook ao conectar.
-        phone: null,
-        sessionName,
-        status: 'connecting',
-        webhookSecretHash: webhook.hash,
-      },
-      select: {
-        id: true,
-        tenantId: true,
-        name: true,
-        phone: true,
-        sessionName: true,
-        status: true,
-        lastSeen: true,
-        createdAt: true,
-      },
-    });
+     const sessionName = this.buildInstanceName(tenantId);
+     const webhook = await this.generateWebhookSecret();
 
-    // 🪵 Log de criação
-    await this.logEvent(session.id, tenantId, 'created', {
-      message: `Sessão "${dto.name}" criada`,
-    });
+     const session = await this.prisma.whatsappSession.create({
+       data: {
+         tenantId,
+         name: dto.name,
+         phone: null,
+         sessionName,
+         // 🔒 S24 — Sessão nasce em 'connecting' mas o controller só enfileira
+         // o job se o caller pedir QR — ver WhatsappSessionsController.create.
+         status: 'connecting',
+         webhookSecretHash: webhook.hash,
+         settings: {
+           create: {
+             contactFilterMode: dto.contactFilterMode ?? 'none',
+             activeBotId: dto.activeBotId,
+             activeBotVersionId: dto.activeBotVersionId ?? null,
+           },
+         },
+       },
+       select: {
+         id: true,
+         tenantId: true,
+         name: true,
+         phone: true,
+         sessionName: true,
+         status: true,
+         lastSeen: true,
+         createdAt: true,
+         settings: {
+           select: {
+             contactFilterMode: true,
+             activeBotId: true,
+             activeBotVersionId: true,
+           },
+         },
+       },
+     });
 
-    // Devolve o secret em claro UMA única vez no retorno — o controller
-    // precisa dele para configurar a Evolution (não persistente em lugar
-    // nenhum além do hash no DB). O frontend não recebe isso.
-    return { session, webhookSecret: webhook.plain };
-  }
+     // Log de criação
+     await this.logEvent(session.id, tenantId, 'created', {
+       message: `Sessão "${dto.name}" criada` +
+         (session.settings ? ` (bot=${session.settings.activeBotId ?? '-'})` : ''),
+     });
+
+     // Devolve o secret em claro UMA única vez — controller passa pro worker
+     // (não persiste em lugar nenhum além do hash). Frontend não recebe.
+     return { session, webhookSecret: webhook.plain };
+   }
+
+   /**
+    * 🔒 S24 — Verifica que o bot referenciado pelo DTO está apto a ser
+    * vinculado a uma sessão. Regras:
+    *  - bot existe E pertence ao tenant
+    *  - bot.status === 'published'
+    *  - se activeBotVersionId vier: pertence ao bot
+    *
+    * Lança BadRequestException com mensagem específica (a UI usa pra
+    * explicar pro usuário).
+    */
+   private async assertBotReadyForSession(
+     tenantId: string,
+     activeBotId: string,
+     activeBotVersionId?: string,
+   ): Promise<void> {
+     const bot = await this.prisma.bot.findFirst({
+       where: { id: activeBotId, tenantId },
+       select: { id: true, status: true },
+     });
+     if (!bot) {
+       throw new BadRequestException('Bot não encontrado neste tenant');
+     }
+     // 🔒 S24 — Os bots usam `status: 'active'` quando publicados
+     // (BotsService.publish seta via tx.bot.update). draft/rascunho = 'draft'.
+     if (bot.status !== 'active') {
+       throw new BadRequestException(
+         `Bot ainda não foi publicado (status atual: ${bot.status}). ` +
+           `Publique o bot antes de criar uma sessão.`,
+       );
+     }
+     if (activeBotVersionId) {
+       const version = await this.prisma.botVersion.findFirst({
+         where: { id: activeBotVersionId, botId: bot.id },
+         select: { id: true },
+       });
+       if (!version) {
+         throw new BadRequestException('A versão informada do bot não pertence ao bot selecionado');
+       }
+     }
+   }
+
+   /**
+    * 🔒 S24 — Atualiza as configurações de uma sessão existente.
+    * Usado pelo PATCH /sessions/:id/settings. NÃO reconecta nem fecha a
+    * sessão — o filtro roda no próximo MESSAGES_UPSERT.
+    */
+   async updateSettings(
+     tenantId: string,
+     sessionId: string,
+     dto: {
+       contactFilterMode?: 'none' | 'whitelist' | 'blacklist';
+       activeBotId?: string | null;
+       activeBotVersionId?: string | null;
+       autoReconnect?: boolean;
+       ignoreGroups?: boolean;
+       readMessages?: boolean;
+       typingIndicator?: boolean;
+       presenceUpdate?: boolean;
+       webhookUrl?: string;
+     },
+   ): Promise<{
+     id: string;
+     contactFilterMode: string;
+     activeBotId: string | null;
+     activeBotVersionId: string | null;
+   }> {
+     const session = await this.prisma.whatsappSession.findFirst({
+       where: { id: sessionId, tenantId },
+       select: { id: true, settings: { select: { id: true } } },
+     });
+     if (!session) throw new NotFoundException('Sessão não encontrada');
+
+     // Se trocar o bot, revalida.
+     let nextActiveBotId: string | null | undefined = dto.activeBotId;
+     let nextActiveBotVersionId: string | null | undefined = dto.activeBotVersionId;
+     if (dto.activeBotId !== undefined && dto.activeBotId !== null) {
+       await this.assertBotReadyForSession(tenantId, dto.activeBotId, dto.activeBotVersionId ?? undefined);
+     }
+     // Se setar null explicitamente (desvincular), limpa também a versão
+     if (dto.activeBotId === null) {
+       nextActiveBotVersionId = null;
+     }
+
+     const updated = await this.prisma.sessionSettings.upsert({
+       where: { sessionId: session.id },
+       update: {
+         ...(dto.contactFilterMode !== undefined ? { contactFilterMode: dto.contactFilterMode } : {}),
+         ...(nextActiveBotId !== undefined ? { activeBotId: nextActiveBotId } : {}),
+         ...(nextActiveBotVersionId !== undefined
+           ? { activeBotVersionId: nextActiveBotVersionId }
+           : {}),
+         ...(dto.autoReconnect !== undefined ? { autoReconnect: dto.autoReconnect } : {}),
+         ...(dto.ignoreGroups !== undefined ? { ignoreGroups: dto.ignoreGroups } : {}),
+         ...(dto.readMessages !== undefined ? { readMessages: dto.readMessages } : {}),
+         ...(dto.typingIndicator !== undefined ? { typingIndicator: dto.typingIndicator } : {}),
+         ...(dto.presenceUpdate !== undefined ? { presenceUpdate: dto.presenceUpdate } : {}),
+         ...(dto.webhookUrl !== undefined ? { webhookUrl: dto.webhookUrl } : {}),
+       },
+       create: {
+         sessionId: session.id,
+         contactFilterMode: dto.contactFilterMode ?? 'none',
+         activeBotId: nextActiveBotId ?? null,
+         activeBotVersionId: nextActiveBotVersionId ?? null,
+       },
+       select: {
+         id: true,
+         contactFilterMode: true,
+         activeBotId: true,
+         activeBotVersionId: true,
+       },
+     });
+
+     return updated;
+   }
+
+   /**
+    * 🔒 S24 — Busca os settings da sessão (helper para o controller).
+    * Cria com defaults se não existir (improvável mas defensivo).
+    */
+   async getSettings(tenantId: string, sessionId: string) {
+     const session = await this.prisma.whatsappSession.findFirst({
+       where: { id: sessionId, tenantId },
+       select: { id: true },
+     });
+     if (!session) throw new NotFoundException('Sessão não encontrada');
+
+     return this.prisma.sessionSettings.upsert({
+       where: { sessionId },
+       update: {},
+       create: { sessionId },
+       select: {
+         id: true,
+         contactFilterMode: true,
+         activeBotId: true,
+         activeBotVersionId: true,
+         autoReconnect: true,
+         ignoreGroups: true,
+         readMessages: true,
+         typingIndicator: true,
+         presenceUpdate: true,
+         webhookUrl: true,
+       },
+     });
+   }
+
+   /**
+    * 🔒 S24 — Gate de conexão (chamado pelo POST /:id/connect). Revalida
+    * que o bot referenciado pelos settings ainda está publicado; se sim,
+    * devolve o webhook secret plain pro worker configurar a Evolution.
+    *
+    * Lança BadRequestException se:
+    *  - sessão sem settings.activeBotId
+    *  - bot foi excluído ou despublicado entre o PATCH /settings e o connect
+    *
+    * Não mexe no status — quem muda status é o worker (markConnected/
+    * logEvent) ou o webhook (CONNECTION_UPDATE).
+    */
+   async startConnect(
+     tenantId: string,
+     sessionId: string,
+   ): Promise<{
+     session: { id: string; status: string };
+     webhookSecret: string;
+   }> {
+     const session = await this.prisma.whatsappSession.findFirst({
+       where: { id: sessionId, tenantId },
+       select: {
+         id: true,
+         status: true,
+         webhookSecretHash: true,
+         settings: {
+           select: { activeBotId: true, activeBotVersionId: true },
+         },
+       },
+     });
+     if (!session) throw new NotFoundException('Sessão não encontrada');
+
+     if (!session.settings?.activeBotId) {
+       throw new BadRequestException(
+         'Esta sessão não tem um bot ativo. Selecione um bot publicado nas configurações antes de gerar o QR Code.',
+       );
+     }
+
+     // Revalida o bot (pode ter sido despublicado/excluído desde o PATCH)
+     const bot = await this.prisma.bot.findFirst({
+       where: {
+         id: session.settings.activeBotId,
+         tenantId,
+       },
+       select: { id: true, status: true },
+     });
+     if (!bot) {
+       throw new BadRequestException(
+         'O bot vinculado a esta sessão foi excluído. Selecione outro bot antes de gerar o QR Code.',
+       );
+     }
+     if (bot.status !== 'active') {
+       throw new BadRequestException(
+         `O bot vinculado a esta sessão não está mais publicado (status: ${bot.status}). ` +
+           `Publique-o ou selecione outro bot antes de gerar o QR Code.`,
+       );
+     }
+
+     // Versão do bot, se setada, deve existir e pertencer ao bot
+     if (session.settings.activeBotVersionId) {
+       const version = await this.prisma.botVersion.findFirst({
+         where: {
+           id: session.settings.activeBotVersionId,
+           botId: bot.id,
+         },
+         select: { id: true },
+       });
+       if (!version) {
+         throw new BadRequestException(
+           'A versão do bot vinculada a esta sessão não existe mais. Selecione outra versão.',
+         );
+       }
+     }
+
+     if (!session.webhookSecretHash) {
+       throw new BadRequestException('Sessão sem webhook secret configurado (estado inválido)');
+     }
+
+     // O hash no DB é argon2 do secret plain. O plain não é persistido em
+     // lugar nenhum — temos que re-gerar (não dá pra recuperar). O worker
+     // re-configura o webhook na Evolution com o novo secret. (S23 já
+     // tinha essa regra.)
+     const { plain } = await this.generateWebhookSecret();
+     await this.prisma.whatsappSession.update({
+       where: { id: session.id },
+       data: { webhookSecretHash: await argon2.hash(plain) },
+     });
+
+     return { session: { id: session.id, status: session.status }, webhookSecret: plain };
+     }
 
   /**
    * Lista sessões do tenant. Para agentes (role=agent), o controller deve
@@ -156,6 +423,13 @@ export class WhatsappSessionsService {
         status: true,
         lastSeen: true,
         createdAt: true,
+        // 🔒 S24 — UI usa pra mostrar "Filtro: blacklist" / "Bot: <nome>".
+        settings: {
+          select: {
+            contactFilterMode: true,
+            activeBotId: true,
+          },
+        },
       },
     });
 
@@ -301,6 +575,8 @@ export class WhatsappSessionsService {
         name: true,
         status: true,
         lastSeen: true,
+        // 🔒 S24 — agentes veem se há filtro ativo (sem expor lista).
+        settings: { select: { contactFilterMode: true } },
       },
     });
   }
@@ -321,7 +597,17 @@ export class WhatsappSessionsService {
         lastSeen: true,
         createdAt: true,
         updatedAt: true,
-        settings: { select: { webhookUrl: true, autoReconnect: true, ignoreGroups: true } },
+        settings: {
+          select: {
+            webhookUrl: true,
+            autoReconnect: true,
+            ignoreGroups: true,
+            // 🔒 S24 — dados novos que a UI consome
+            contactFilterMode: true,
+            activeBotId: true,
+            activeBotVersionId: true,
+          },
+        },
       },
     });
     if (!session) throw new NotFoundException('Sessão não encontrada');

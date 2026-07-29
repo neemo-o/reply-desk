@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { CreateContactDto } from './dto/create-contact.dto';
 import { UpdateContactDto } from './dto/update-contact.dto';
@@ -86,5 +86,48 @@ export class ContactsService {
     await this.findOne(tenantId, id);
     await this.prisma.contact.delete({ where: { id } });
     return { success: true };
+  }
+
+  /**
+   * 🔒 S24 — Upsert de contato por (tenantId, phone). Usado pelo
+   * `POST /contacts` da página de settings da sessão — quando o owner
+   * quer adicionar à blacklist alguém que AINDA NÃO mandou mensagem.
+   *
+   * Se já existir contato com esse phone no tenant, devolve o existente
+   * (atualiza name/notes se vierem). Senão cria.
+   */
+  async upsertByPhone(
+    tenantId: string,
+    rawPhone: string,
+    fields: { name?: string; notes?: string } = {},
+  ) {
+    const phone = rawPhone.replace(/\D/g, '');
+    if (!phone) {
+      throw new BadRequestException('phone inválido');
+    }
+    return this.prisma.contact.upsert({
+      where: { tenantId_phone: { tenantId, phone } },
+      update: {
+        ...(fields.name !== undefined ? { name: fields.name } : {}),
+        ...(fields.notes !== undefined ? { notes: fields.notes } : {}),
+      },
+      create: {
+        tenantId,
+        phone,
+        name: fields.name ?? null,
+        notes: fields.notes ?? null,
+      },
+      select: {
+        id: true,
+        tenantId: true,
+        phone: true,
+        name: true,
+        email: true,
+        avatar: true,
+        notes: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
   }
 }

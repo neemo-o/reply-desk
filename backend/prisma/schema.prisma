@@ -208,6 +208,11 @@ model WhatsappSession {
   sessionName         String    @map("session_name")
   evolutionInstanceId String?   @map("evolution_instance_id")
   status              String    @default("disconnected")
+  /// 🔒 S24 — Status intermediário antes de tentar conectar na Evolution.
+  /// Criado quando o usuário tenta criar uma sessão sem bot publicado (ou
+  /// config inválida). Fica esperando o owner ajustar — o botão "Conectar"
+  /// /QR fica desabilitado até a config ficar válida.
+  /// Valores: 'disconnected' | 'connecting' | 'connected' | 'draft' | 'error' | 'logged_out'
   // 🔒 Não armazenamos QR Code nem credenciais do WhatsApp no banco — esses
   // dados ficam no armazenamento persistente da própria Evolution API
   // (volume Docker /evolution_data). O backend consulta `/instance/connect`
@@ -224,6 +229,7 @@ model WhatsappSession {
   settings      SessionSettings?
   conversations Conversation[]
   events        SessionEvent[]
+  contactList   SessionContactListItem[]
 
   @@unique([sessionName]) // DB-8: lookup por Evolution webhook
   @@index([tenantId, status]) // DB-8: listagem por status
@@ -270,9 +276,56 @@ model SessionSettings {
   typingIndicator Boolean @default(true) @map("typing_indicator")
   presenceUpdate  Boolean @default(true) @map("presence_update")
 
-  session WhatsappSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  // 🔒 S24 — Modo de filtragem de contatos (whitelist/blacklist).
+  // Valores: 'none' | 'whitelist' | 'blacklist'.
+  // Regras (aplicadas no onMessagesUpsert antes da persistência):
+  //  - 'whitelist' não-vazia: só responde quem está na lista; contato fora
+  //    da lista → mensagem NEM entra no DB.
+  //  - 'whitelist' vazia: whitelist não restringe (cai pra blacklist).
+  //  - 'blacklist' não-vazia: quem está na lista é bloqueado; contato fora
+  //    da blacklist → passa (sujeito à whitelist acima).
+  //  - 'none': responde a todos (comportamento legado).
+  contactFilterMode String @default("none") @map("contact_filter_mode")
+
+  // 🔒 S24 — Bot ativo desta sessão. Obrigatório para a sessão ser
+  // "conectável" (caso contrário status vira 'draft' e o QR fica
+  // desabilitado na UI). SetNull pra não bloquear exclusão de bot.
+  activeBotId         String?  @map("active_bot_id")
+  activeBotVersionId  String?  @map("active_bot_version_id")
+
+  session         WhatsappSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  activeBot       Bot?            @relation(fields: [activeBotId], references: [id], onDelete: SetNull)
+  activeBotVersion BotVersion?    @relation(fields: [activeBotVersionId], references: [id], onDelete: SetNull)
 
   @@map("session_settings")
+}
+
+/// 🔒 S24 — Lista de contatos da sessão (whitelist e/ou blacklist).
+/// Whitelist e blacklist podem coexistir na mesma sessão — o contato pode
+/// estar nas duas listas (a regra de negócio decide a precedência).
+/// Não usamos tag separada: a tabela é simples e indexada para lookup
+/// rápido no inbound webhook (sessionId, contactId).
+model SessionContactListItem {
+  id        String   @id @default(uuid())
+  sessionId String   @map("session_id")
+  contactId String   @map("contact_id")
+  /// Lista à qual o contato pertence: 'whitelist' | 'blacklist'.
+  /// Mesmo contato pode aparecer duas vezes (uma por lista) — o
+  /// @@unique cobre apenas o par (sessionId, contactId, list).
+  list      String
+  /// Motivo/observação opcional que o owner preenche ("cliente VIP",
+  /// "concorrente", "só teste", etc.) — exibido na UI pra ajudar a
+  /// lembrar por que adicionou.
+  note      String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  session WhatsappSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  contact Contact         @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, contactId, list]) // não duplicar (contato, lista) na sessão
+  @@index([sessionId])                   // S24: lookup "está na lista?" no inbound
+  @@index([sessionId, list])             // S24: listagem por lista na UI
+  @@map("session_contact_list_items")
 }
 
 model Bot {
@@ -285,8 +338,9 @@ model Bot {
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  tenant   Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  versions BotVersion[]
+  tenant          Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  versions        BotVersion[]
+  sessionBindings SessionSettings[] // 🔒 S24 — sessões que apontam pra este bot como ativo
 
   @@index([tenantId, status]) // DB-1: bots ativos por tenant
   @@map("bots")
@@ -302,6 +356,7 @@ model BotVersion {
   bot       Bot           @relation(fields: [botId], references: [id], onDelete: Cascade)
   rules     BotRule[]
   variables BotVariable[]
+  sessionBindings SessionSettings[] // 🔒 S24 — sessões que apontam pra esta versão como ativa
 
   @@unique([botId, version])
   @@index([botId, published]) // DB-1: buscar versão publicada
@@ -383,6 +438,7 @@ model Contact {
   tenant        Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   conversations Conversation[]
   tagRelations  ContactTagRelation[]
+  listItems     SessionContactListItem[] // 🔒 S24 — em quais listas de sessão este contato aparece
 
   @@unique([tenantId, phone]) // lookup por phone dentro do tenant (upsert no webhook)
   @@index([phone]) // existente — mantido

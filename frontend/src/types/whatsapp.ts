@@ -25,6 +25,10 @@ export interface WhatsappSession {
     webhookUrl?: string | null;
     autoReconnect?: boolean;
     ignoreGroups?: boolean;
+    // 🔒 S24 — campos adicionados pela feature de configuração
+    contactFilterMode?: ContactFilterMode;
+    activeBotId?: string | null;
+    activeBotVersionId?: string | null;
   } | null;
 }
 
@@ -44,6 +48,82 @@ export interface WhatsappSessionSafe {
 export interface CreateSessionPayload {
   /** 🔒 S23 — `phone` removido: o número vem do webhook ao escanear o QR. */
   name: string;
+  // 🔒 S24 — config obrigatória na criação.
+  activeBotId: string;
+  activeBotVersionId?: string;
+  contactFilterMode?: ContactFilterMode;
+}
+
+// 🔒 S24 — Modos do filtro de contatos da sessão.
+export type ContactFilterMode = "none" | "whitelist" | "blacklist";
+export type ContactList = "whitelist" | "blacklist";
+
+export const CONTACT_FILTER_LABELS: Record<ContactFilterMode, string> = {
+  none: "Sem filtro (responde qualquer contato)",
+  whitelist:
+    "Whitelist (só responde quem está na lista; vazia = responde qualquer um)",
+  blacklist:
+    "Blacklist (bloqueia contatos da lista; aplicada quando whitelist não restringe)",
+};
+
+// 🔒 S24 — Settings completas da sessão (resposta de GET/PATCH
+// /whatsapp/sessions/:id/settings). Alguns campos são só leitura
+// nesta versão (autoReconnect, ignoreGroups, etc.).
+export interface SessionSettings {
+  id: string;
+  contactFilterMode: ContactFilterMode;
+  activeBotId: string | null;
+  activeBotVersionId: string | null;
+  autoReconnect: boolean;
+  ignoreGroups: boolean;
+  readMessages: boolean;
+  typingIndicator: boolean;
+  presenceUpdate: boolean;
+  webhookUrl: string | null;
+}
+
+export interface UpdateSessionSettingsPayload {
+  contactFilterMode?: ContactFilterMode;
+  activeBotId?: string | null;
+  activeBotVersionId?: string | null;
+  autoReconnect?: boolean;
+  ignoreGroups?: boolean;
+  readMessages?: boolean;
+  typingIndicator?: boolean;
+  presenceUpdate?: boolean;
+  webhookUrl?: string;
+}
+
+/**
+ * 🔒 S24 — Item de lista (whitelist|blacklist) com o contato embutido.
+ * Devolvido por GET /whatsapp/sessions/:id/settings/contacts.
+ */
+export interface SessionContactListItem {
+  id: string;
+  list: ContactList;
+  note: string | null;
+  createdAt: string;
+  contact: {
+    id: string;
+    phone: string;
+    name: string | null;
+    email?: string | null;
+    avatar?: string | null;
+  };
+}
+
+/** 🔒 S24 — POST /whatsapp/sessions/:id/settings/contacts */
+export interface AddContactToListPayload {
+  contactId: string;
+  list: ContactList;
+  note?: string;
+}
+
+/** 🔒 S24 — POST /whatsapp/sessions/contacts (cria contato manual) */
+export interface CreateContactPayload {
+  phone: string;
+  name?: string;
+  notes?: string;
 }
 
 export interface QrCodeResponse {
