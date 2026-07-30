@@ -46,6 +46,19 @@ export default () => ({
     placeholderText:
       process.env.EVO_PLACEHOLDER_TEXT ??
       'Olá! Recebi sua mensagem. Em breve um atendente responderá. 🤖 ReplyDesk',
+    // 🔒 S25 — Limite de tentativas de QR Code antes de marcar a sessão
+    // como qr_expired. Cada poll do frontend que realmente bate na
+    // Evolution (após a janela de debouncing) incrementa qrAttempts.
+    // Atingiu este valor → status='qr_expired', frontend mostra botão
+    // "Reconectar". Env: EVOLUTION_QR_MAX_ATTEMPTS, default 5.
+    qrMaxAttempts: parseInt(process.env.EVOLUTION_QR_MAX_ATTEMPTS ?? '5', 10),
+    // 🔒 S25 — Janela de debouncing (ms) entre polls para o MESMO QR.
+    // Polls dentro desta janela devolvem o QR cacheado em vez de chamar
+    // /instance/connect na Evolution de novo. Crítico para evitar
+    // race com webhook CONNECTION_UPDATE state=open (cada /instance/connect
+    // recria a sessão Baileys e derruba a conexão recém-estabelecida).
+    // Env: EVOLUTION_QR_DEBOUNCE_MS, default 3000.
+    qrDebounceMs: parseInt(process.env.EVOLUTION_QR_DEBOUNCE_MS ?? '3000', 10),
   },
   stripe: {
     secretKey: process.env.STRIPE_SECRET_KEY,

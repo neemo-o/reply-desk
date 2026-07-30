@@ -13,6 +13,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { EvolutionService } from '../../common/evolution/evolution.service';
 import { PlanLimitsService } from '../subscriptions/plan-limits.service';
 import { isUuid } from '../../common/utils/security';
+import { ConfigService } from '@nestjs/config';
 import {
   CreateSessionDto,
   normalizeContactFilterMode,
@@ -51,11 +52,68 @@ import {
 export class WhatsappSessionsService {
   private readonly logger = new Logger(WhatsappSessionsService.name);
 
+  /**
+   * 🔒 S25 — Cache in-memory do último QR retornado por sessão, usado
+   * para coalescer múltiplos polls do frontend (que batem a cada 2s) em
+   * UMA única chamada /instance/connect. Resolve a race em que o
+   * frontend pollava o QR **depois** de o usuário ter escaneado —
+   * cada /instance/connect da Evolution derruba a conexão recém feita.
+   *
+   * Chave: sessionId do nosso banco (UUID interno), não sessionName da
+   * Evolution. TTL = EVOLUTION_QR_DEBOUNCE_MS (default 3s). Map simples
+   * em memória; cada entrada guarda o QR base64 + timestamp de geração.
+   * Se o processo reiniciar, o cache some (tudo bem — o usuário só vê
+   * um QR novo após 3s no pior caso).
+   */
+  private readonly qrCache = new Map<string, { qrcode: string; code?: string; pairingCode?: string; generatedAt: number }>();
+
+  /**
+   * 🔒 S25 — Limite de tentativas de QR antes de marcar `qr_expired`.
+   * Configurável via env EVOLUTION_QR_MAX_ATTEMPTS (default 5).
+   */
+  private readonly qrMaxAttempts: number;
+
+  /**
+   * 🔒 S25 — Janela de debouncing entre polls (ms). Se dois polls
+   * chegarem dentro dessa janela, devolvemos o QR cacheado em vez de
+   * bater na Evolution de novo.
+   */
+  private readonly qrDebounceMs: number;
+
+  /**
+   * 🔒 Idade máxima de uma entrada do qrCache antes de ser considerada
+   * órfã e removida pelo cleanup periódico. Padrão: 5 minutos (300x o
+   * debounce default). Bem acima de qualquer uso legítimo.
+   */
+  private readonly qrCacheMaxAgeMs = 5 * 60 * 1000;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly planLimits: PlanLimitsService,
     private readonly evolution: EvolutionService,
-  ) {}
+    config: ConfigService,
+  ) {
+    this.qrMaxAttempts = Math.max(1, parseInt(config.get<string>('evolution.qrMaxAttempts') ?? '5', 10) || 5);
+    this.qrDebounceMs = Math.max(500, parseInt(config.get<string>('evolution.qrDebounceMs') ?? '3000', 10) || 3000);
+
+    // 🔒 Limpeza periódica do qrCache: remove entries órfãs (sessões
+    // deletadas, sessões que conectaram mas não chamaram markConnected,
+    // etc). .unref() impede que o timer bloqueie o shutdown do processo.
+    const cleanupInterval = setInterval(() => {
+      const now = Date.now();
+      let removed = 0;
+      for (const [key, entry] of this.qrCache.entries()) {
+        if (now - entry.generatedAt > this.qrCacheMaxAgeMs) {
+          this.qrCache.delete(key);
+          removed += 1;
+        }
+      }
+      if (removed > 0) {
+        this.logger.debug(`qrCache: ${removed} entries órfãs removidas (total=${this.qrCache.size})`);
+      }
+    }, 60_000);
+    cleanupInterval.unref();
+  }
 
   /**
    * Gera um instanceName único para a Evolution API.
@@ -411,6 +469,11 @@ export class WhatsappSessionsService {
        data: { webhookSecretHash: await argon2.hash(plain) },
      });
 
+     // 🔒 S25 — Limpa cache in-memory + zera qrAttempts ao iniciar uma
+     // nova tentativa de conexão. Garante que /:id/connect começa do
+     // zero e não carrega cache de uma tentativa anterior.
+     await this.resetQrAttempts(session.id);
+
      return { session: { id: session.id, status: session.status }, webhookSecret: plain };
      }
 
@@ -434,9 +497,11 @@ export class WhatsappSessionsService {
         sessionName: true,
         evolutionInstanceId: true,
         status: true,
+        // 🔒 S25 — UI pode usar pra mostrar tentativas restantes do QR.
+        qrAttempts: true,
         lastSeen: true,
         createdAt: true,
-        // 🔒 S24 — UI usa pra mostrar "Filtro: blacklist" / "Bot: <nome>".
+        // 🔒 S24 — UI usa pra mostrar Filtro: blacklist / Bot: <nome>.
         settings: {
           select: {
             contactFilterMode: true,
@@ -607,6 +672,11 @@ export class WhatsappSessionsService {
         sessionName: true,
         evolutionInstanceId: true,
         status: true,
+        // 🔒 S25 — Contador e timestamp do último QR. O getQrCode usa
+        // qrAttempts para devolver qrExpired=true quando o limite
+        // foi atingido, e qrLastGeneratedAt para diagnóstico.
+        qrAttempts: true,
+        qrLastGeneratedAt: true,
         lastSeen: true,
         createdAt: true,
         updatedAt: true,
@@ -757,31 +827,142 @@ export class WhatsappSessionsService {
    * mesmo webhook secret (preservando o hash). Assim "desconectar e
    * reconectar" funciona mesmo que a Evolution tenha limpo a instância.
    */
+  /**
+   * 🔒 S23/S25 — Busca o QR Code atual na Evolution API e devolve ao frontend.
+   *
+   * Regras S25 (limite + race condition):
+   *  1. **Race condition "conecta → desconecta"**: o frontend pollava a cada 2s
+   *     e cada poll chamava /instance/connect na Evolution — que RECRIA a sessão
+   *     Baileys. Resultado: usuário escaneava o QR, conectava, e o poll 2s
+   *     depois derrubava a conexão. Agora:
+   *       - Antes de chamar Evolution, verificamos se status='connected' ou
+   *         se a Evolution já reporta state=open via fetchInstance (caminho
+   *         rápido sem chamada destrutiva).
+   *       - Cada QR gerado pelo backend é cacheado em memória por
+   *         `qrDebounceMs` (default 3s). Polls dentro da janela devolvem
+   *         o mesmo QR sem chamar a Evolution de novo.
+   *  2. **Limite de tentativas**: contador `qrAttempts` na sessão.
+   *     Cada QR novo (cache miss, ou seja, após `qrDebounceMs`) incrementa.
+   *     Quando atinge `qrMaxAttempts` (default 5, env EVOLUTION_QR_MAX_ATTEMPTS),
+   *     status vira 'qr_expired' e paramos de gerar QR. Frontend mostra botão
+   *     "Reconectar" e o owner/admin usa POST /:id/reconnect ou /:id/connect
+   *     para resetar.
+   *  3. **qrLastGeneratedAt** no DB é atualizado junto com qrAttempts para
+   *     diagnóstico (logs sabem quando foi o último QR gerado).
+   *
+   * Nunca persistimos o QR em si — ele é cache em memória + devolvido
+   * em tempo real. Se o processo reiniciar, o cache some e o próximo
+   * poll gera um QR novo (comportamento aceitável: o usuário só vê um
+   * QR novo após o restart).
+   */
   async getQrCode(tenantId: string, id: string): Promise<{
     connected: boolean;
     qrcode?: string;
     code?: string;
     pairingCode?: string;
+    qrExpired?: boolean;
+    qrAttempts?: number;
+    qrMaxAttempts?: number;
   }> {
     const session = await this.findOne(tenantId, id);
+
+    // 🔒 S25 — Status terminal de tentativas esgotadas: NÃO chamar
+    // Evolution, devolver qrExpired=true para o frontend parar de
+    // pollar e mostrar o botão "Reconectar".
+    if (session.status === 'qr_expired') {
+      return {
+        connected: false,
+        qrExpired: true,
+        qrAttempts: session.qrAttempts ?? 0,
+        qrMaxAttempts: this.qrMaxAttempts,
+      };
+    }
+
     if (session.status === 'connected') {
+      // Limpa cache stale para essa sessão — está conectada, não tem
+      // mais QR válido.
+      this.qrCache.delete(session.id);
       return { connected: true };
     }
+
     // 🔒 Se ainda não tem evolutionInstanceId, a instância pode ainda não
     // ter sido criada (job em fila). Retornamos pending para o frontend
     // pollar novamente em 2-3s.
     if (!session.evolutionInstanceId && session.status === 'connecting') {
       return { connected: false };
     }
+
+    // 🔒 S25 — Cache hit dentro da janela de debouncing: devolve o QR
+    // anterior sem chamar a Evolution. ESSENCIAL — sem isso, cada poll
+    // do frontend (a cada 2s) batia na Evolution e invalidava o QR
+    // recém-escaneado.
+    const cached = this.qrCache.get(session.id);
+    const now = Date.now();
+    if (cached && now - cached.generatedAt < this.qrDebounceMs) {
+      return {
+        connected: false,
+        qrcode: cached.qrcode,
+        code: cached.code,
+        pairingCode: cached.pairingCode,
+        qrAttempts: session.qrAttempts ?? 0,
+        qrMaxAttempts: this.qrMaxAttempts,
+      };
+    }
+
     try {
       const qr = await this.evolution.connect(session.sessionName);
-      // Garante status qrcode_pending para o UI mostrar o QR
-      await this.updateStatus(session.id, 'qrcode_pending');
+
+      // 🔒 S25 — Incrementa qrAttempts e checa limite ANTES de devolver.
+      // Usamos updateMany para ser atômico (sem read-modify-write):
+      //   1) incrementa para novo valor
+      //   2) se novo >= max, marca status='qr_expired'
+      // Tudo num único round-trip ao DB.
+      const incrementResult = await this.prisma.whatsappSession.update({
+        where: { id: session.id },
+        data: {
+          qrAttempts: { increment: 1 },
+          qrLastGeneratedAt: new Date(),
+          status: 'qrcode_pending',
+          lastSeen: new Date(),
+        },
+        select: { qrAttempts: true },
+      });
+      const newAttempts = incrementResult.qrAttempts;
+
+      if (newAttempts >= this.qrMaxAttempts) {
+        // Esgotou tentativas: marca terminal e loga.
+        await this.updateStatus(session.id, 'qr_expired');
+        this.qrCache.delete(session.id);
+        await this.logEvent(session.id, tenantId, 'qr_expired', {
+          message: `Limite de ${this.qrMaxAttempts} tentativas de QR atingido. Reconecte para gerar um novo QR.`,
+          metadata: { qrAttempts: newAttempts, qrMaxAttempts: this.qrMaxAttempts },
+        });
+        this.logger.warn(
+          `session ${session.id}: limite de QR atingido (${newAttempts}/${this.qrMaxAttempts}) — status=qr_expired`,
+        );
+        return {
+          connected: false,
+          qrExpired: true,
+          qrAttempts: newAttempts,
+          qrMaxAttempts: this.qrMaxAttempts,
+        };
+      }
+
+      // Cacheia o QR recém-gerado para coalescer os próximos polls.
+      this.qrCache.set(session.id, {
+        qrcode: qr.base64 ?? '',
+        code: qr.code,
+        pairingCode: qr.pairingCode,
+        generatedAt: now,
+      });
+
       return {
         connected: false,
         qrcode: qr.base64,
         code: qr.code,
         pairingCode: qr.pairingCode,
+        qrAttempts: newAttempts,
+        qrMaxAttempts: this.qrMaxAttempts,
       };
     } catch (err) {
       // Se a instância não existe mais na Evolution, recriamos mantendo
@@ -792,6 +973,9 @@ export class WhatsappSessionsService {
         this.logger.warn(
           `getQrCode: instância ${session.sessionName} sumiu da Evolution — recriando via job`,
         );
+        // 🔒 S25 — Limpa cache ao recriar (status novo, QR novo vai
+        // chegar diferente).
+        this.qrCache.delete(session.id);
         await this.updateStatus(session.id, 'connecting');
         // Não recriamos inline — o controller reenfileira o job connect-session
         // via endpoint aparte. Aqui retornamos pending para o frontend pollar.
@@ -804,6 +988,23 @@ export class WhatsappSessionsService {
       );
       throw err;
     }
+  }
+
+  /**
+   * 🔒 S25 — Reseta o contador de tentativas de QR. Chamado por:
+   *   - create()  (nova sessão sempre começa em 0)
+   *   - startConnect()  (POST /:id/connect)
+   *   - reconnect()  (POST /:id/reconnect)
+   *   - markConnected()  (webhook CONNECTION_UPDATE state=open)
+   * Também limpa o cache in-memory do QR.
+   */
+  private async resetQrAttempts(sessionId: string): Promise<void> {
+    this.qrCache.delete(sessionId);
+    await this.prisma.whatsappSession.update({
+      where: { id: sessionId },
+      data: { qrAttempts: 0, qrLastGeneratedAt: null },
+      select: { id: true },
+    });
   }
 
   // ─── Operações de instância ────────────────────────────────────────
@@ -829,6 +1030,12 @@ export class WhatsappSessionsService {
     // Para não guardar o webhook secret plain, regeramos um novo secret,
     // atualizamos o hash e reenfileiramos o job de criação (controller decide).
     await this.updateStatus(session.id, 'connecting');
+
+    // 🔒 S25 — Limpa cache e zera qrAttempts ANTES da chamada à Evolution.
+    // Sem isso, a sessão poderia estar em qr_expired e o cache devolveria
+    // QR stale (ou ficaria órfão em memória). Reset aqui é o caminho canônico
+    // de "começar do zero" — equivalente a um POST /:id/connect novo.
+    await this.resetQrAttempts(session.id);
 
     // 🔒 Gera novo webhook secret e re-aplica na Evolution para garantir
     // que o webhook configurado usa a lista ATUAL de WEBHOOK_EVENTS.
@@ -1005,6 +1212,8 @@ export class WhatsappSessionsService {
     } catch (err) {
       this.logger.warn(`delete: ${(err as Error).message}`);
     }
+    // 🔒 Limpa qrCache ao deletar (evita memory leak de entries órfãs).
+    this.qrCache.delete(session.id);
     await this.logEvent(session.id, tenantId, 'deleted', {
       message: `Sessão "${session.name}" excluída`,
     });
@@ -1051,10 +1260,20 @@ export class WhatsappSessionsService {
         status: 'connected',
         ...(phone ? { phone } : {}),
         ...(profileName ? { profileName } : {}),
+        // 🔒 S25 — Quando conecta, zera qrAttempts e limpa cache. Garante
+        // que a próxima vez que essa sessão precisar de QR (desconectou
+        // e reconectou), o contador começa do zero de novo.
+        qrAttempts: 0,
+        qrLastGeneratedAt: null,
         lastSeen: new Date(),
       },
       select: { id: true, status: true, phone: true, tenantId: true, name: true },
     });
+    // 🔒 S25 — Limpa cache in-memory também (qrAttempts reset no DB já
+    // cobre o caso, mas o cache guardava o QR até qrDebounceMs atrás —
+    // se o usuário escaneia e volta a pedir o QR antes disso, o cache
+    // ainda serviria um QR velho da Evolution).
+    this.qrCache.delete(sessionId);
     // 🪵 Log de conexão
     await this.logEvent(sessionId, update.tenantId, 'connected', {
       phone,

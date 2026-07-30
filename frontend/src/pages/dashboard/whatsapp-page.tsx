@@ -65,10 +65,10 @@ import {
   useRenameSession,
   useSessionLogs,
 } from "@/hooks/use-whatsapp";
+import { useSessionQr } from "@/hooks/use-session-qr";
 import { useBots } from "@/hooks/use-bots";
 import { useConnectSession } from "@/hooks/use-session-settings";
 import { SessionSettingsPanel } from "@/pages/dashboard/session-settings-panel";
-import { whatsappService } from "@/services/whatsapp-service";
 import type {
   ContactFilterMode,
   SessionEvent,
@@ -87,13 +87,16 @@ const STATUS_LABEL: Record<SessionStatus, string> = {
   connecting: "Conectando…",
   disconnected: "Desconectado",
   qrcode_pending: "Aguardando QR",
+  // 🔒 S25 — Limite de tentativas de QR atingido; precisa reconectar.
+  qr_expired: "QR expirado",
 };
 
-const STATUS_BADGE: Record<SessionStatus, "success" | "warning" | "secondary" | "outline"> = {
+const STATUS_BADGE: Record<SessionStatus, "success" | "warning" | "secondary" | "outline" | "destructive"> = {
   connected: "success",
   connecting: "warning",
   disconnected: "secondary",
   qrcode_pending: "warning",
+  qr_expired: "destructive",
 };
 
 function StatusDot({ status }: { status: SessionStatus }) {
@@ -102,7 +105,9 @@ function StatusDot({ status }: { status: SessionStatus }) {
       ? "bg-emerald-500"
       : status === "qrcode_pending" || status === "connecting"
         ? "bg-amber-500 animate-pulse"
-        : "bg-muted-foreground/60";
+        : status === "qr_expired"
+          ? "bg-red-500"
+          : "bg-muted-foreground/60";
   return <span className={cn("inline-block h-2 w-2 rounded-full", color)} aria-hidden />;
 }
 
@@ -423,49 +428,21 @@ function SessionDetail({
   // 🔒 S23 — Polling do QR só quando:
   //  - usuário é owner/admin (agentes não precisam de QR)
   //  - sessão está aguardando QR ou conectando
-  const needsQr = canManage && (session.status === "qrcode_pending" || session.status === "connecting");
-  const [qrState, setQrState] = useState<{
-    connected: boolean;
-    qrcode?: string;
-    code?: string;
-    pairingCode?: string;
-  } | null>(null);
-  // 🔒 S23 — Countdown de regeneração do QR Code. A plataforma regenera
-  // o QR aproximadamente a cada 60s. Mostramos um contador regressivo
-  // para o usuário saber quando o QR atual vai expirar.
-  const [qrSecondsLeft, setQrSecondsLeft] = useState(60);
+  // 🔒 S25 — Sessão em qr_expired NÃO entra em polling. O backend já
+  // não gera QR; o frontend mostra mensagem + botão "Reconectar".
+  const needsQr =
+    canManage &&
+    (session.status === "qrcode_pending" || session.status === "connecting");
+  const qrExpired = session.status === "qr_expired";
 
-  useEffect(() => {
-    setQrState(null);
-    setQrSecondsLeft(60);
-    if (!needsQr) return;
-    let cancelled = false;
-    let lastQrBase: string | undefined;
-    const poll = async () => {
-      while (!cancelled && needsQr) {
-        try {
-          const data = await whatsappService.getQr(session.id);
-          if (cancelled) break;
-          setQrState(data);
-          // Reset countdown ao detectar QR novo
-          if (data.qrcode && data.qrcode !== lastQrBase) {
-            lastQrBase = data.qrcode;
-            setQrSecondsLeft(60);
-          }
-          if (data.connected) break;
-        } catch {
-          // silent — retry no próximo tick
-        }
-        // Aguarda 2s entre polls. Cada poll decrementa o countdown.
-        await new Promise((r) => setTimeout(r, 2000));
-        setQrSecondsLeft((s) => Math.max(0, s - 2));
-      }
-    };
-    void poll();
-    return () => {
-      cancelled = true;
-    };
-  }, [session.id, needsQr]);
+  // 📱 Hook unificado para o QR Code — substitui o loop manual antigo.
+  // Controla: polling, countdown, backoff em erro, parada automática em
+  // estados terminais (connected/qrExpired).
+  const {
+    data: qrState,
+    error: qrError,
+    qrSecondsLeft,
+  } = useSessionQr(session.id, needsQr);
 
   const reconnect = useReconnectSession();
   const logout = useLogoutSession();
@@ -560,9 +537,23 @@ function SessionDetail({
               <div className="flex items-center gap-2 text-sm font-medium text-emerald-600 dark:text-emerald-400">
                 <CircleCheck className="h-4 w-4" /> Sessão conectada!
               </div>
+            ) : qrError ? (
+              // 🟠 Feedback de erro visível (antes era silencioso)
+              <div className="flex flex-col items-center gap-2 text-sm text-destructive">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4" />
+                  Erro ao buscar QR. Tentando novamente...
+                </div>
+                <div className="flex h-56 w-56 items-center justify-center rounded-lg border border-border bg-muted/30">
+                  <Loader2 className="h-6 w-6 animate-spin" />
+                </div>
+              </div>
             ) : qrState?.qrcode ? (
               <>
+                {/* key={qrcode.slice(-32)} força remontagem do <img> quando o
+                    QR muda → libera memória de imagens antigas (BAIXO 14). */}
                 <img
+                  key={qrState.qrcode.slice(-32)}
                   src={
                     qrState.qrcode.startsWith("data:")
                       ? qrState.qrcode
@@ -590,6 +581,16 @@ function SessionDetail({
                 <p className="text-xs text-muted-foreground">Código de pareamento</p>
                 <p className="font-mono text-lg font-semibold">{qrState.code}</p>
               </div>
+            ) : session.status === "connecting" ? (
+              // 🟠 Estado intermediário: job enfileirado mas instância ainda
+              // não foi criada na Evolution. Mostra mensagem explicativa.
+              <div className="flex flex-col items-center gap-2 py-8 text-center">
+                <Loader2 className="h-6 w-6 animate-spin text-sky-600" />
+                <p className="text-sm font-medium">Criando instância na Evolution...</p>
+                <p className="text-xs text-muted-foreground">
+                  Isto pode levar alguns segundos na primeira tentativa.
+                </p>
+              </div>
             ) : (
               <div className="flex h-56 w-56 items-center justify-center">
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -597,6 +598,32 @@ function SessionDetail({
             )}
             <p className="text-xs text-muted-foreground">
               O QR é buscado em tempo real na plataforma e nunca é persistido no banco.
+            </p>
+          </div>
+        )}
+
+        {/* 🔒 S25 — Limite de tentativas de QR atingido. Mostramos uma
+            mensagem clara e habilitamos o botão "Reconectar" (que já existe
+            no rodapé — só precisamos deixar habilitado aqui). A UI também
+            mostra quantas tentativas foram gastas para o usuário entender
+            o que aconteceu. */}
+        {qrExpired && (
+          <div className="flex flex-col items-center gap-3 rounded-lg border border-red-300/50 bg-red-50/40 p-6 text-center dark:border-red-800/50 dark:bg-red-950/30">
+            <div className="flex items-center gap-2 text-sm font-medium text-red-700 dark:text-red-300">
+              <AlertTriangle className="h-4 w-4" />
+              Limite de tentativas de QR atingido
+            </div>
+            <p className="text-xs text-red-700/90 dark:text-red-300/90">
+              O QR Code foi gerado{" "}
+              <strong className="font-mono">
+                {session.qrAttempts ?? qrState?.qrAttempts ?? 0}
+              </strong>{" "}
+              vez(es) sem nenhum escaneamento. Por segurança, paramos de
+              gerar QR automaticamente para esta sessão.
+            </p>
+            <p className="text-[11px] text-red-700/70 dark:text-red-300/70">
+              Clique em <strong>Reconectar</strong> abaixo para reiniciar
+              e gerar um novo QR Code.
             </p>
           </div>
         )}
@@ -626,8 +653,17 @@ function SessionDetail({
             variant="outline"
             size="sm"
             onClick={() => reconnect.mutate(session.id)}
-            disabled={reconnect.isPending || session.status === "connected"}
-            title="Reconectar — gera um QR Code novo"
+            // 🔒 S25 — Habilita Reconectar também em qr_expired: este é o
+            // ÚNICO caminho para sair desse estado (zera qrAttempts no DB).
+            disabled={
+              reconnect.isPending ||
+              session.status === "connected"
+            }
+            title={
+              session.status === "qr_expired"
+                ? "Reconectar — zera o limite e gera um QR Code novo"
+                : "Reconectar — gera um QR Code novo"
+            }
           >
             <RefreshCw className={cn("h-4 w-4", reconnect.isPending && "animate-spin")} />
             Reconectar
@@ -636,7 +672,13 @@ function SessionDetail({
             variant="outline"
             size="sm"
             onClick={() => logout.mutate(session.id)}
-            disabled={logout.isPending || session.status === "qrcode_pending" || session.status === "connecting"}
+            // 🔒 S25 — Permite Desconectar mesmo em qr_expired (logout zera
+            // qrAttempts via restart na Evolution e volta para qrcode_pending).
+            disabled={
+              logout.isPending ||
+              session.status === "qrcode_pending" ||
+              session.status === "connecting"
+            }
             title="Desconectar — reseta a sessão e mostra QR Code novo (para trocar de número)"
           >
             <LogOut className="h-4 w-4" />

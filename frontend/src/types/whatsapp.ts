@@ -6,7 +6,11 @@ export type SessionStatus =
   | "disconnected"
   | "connecting"
   | "qrcode_pending"
-  | "connected";
+  | "connected"
+  // 🔒 S25 — Estado terminal: atingiu EVOLUTION_QR_MAX_ATTEMPTS sem
+  // nenhum QR ter sido escaneado. Backend não gera mais QR; usuário
+  // precisa clicar em "Reconectar" para resetar qrAttempts.
+  | "qr_expired";
 
 export interface WhatsappSession {
   id: string;
@@ -18,6 +22,11 @@ export interface WhatsappSession {
   sessionName: string;
   evolutionInstanceId?: string | null;
   status: SessionStatus;
+  // 🔒 S25 — Contador de tentativas de QR Code gerados (sem scan).
+  // Atingiu qrMaxAttempts → status vira 'qr_expired'.
+  qrAttempts?: number;
+  /** Data do último QR Code gerado. */
+  qrLastGeneratedAt?: string | null;
   lastSeen?: string | null;
   createdAt: string;
   updatedAt?: string;
@@ -144,6 +153,14 @@ export interface QrCodeResponse {
   code?: string;
   /** código de pareamento (WhatsApp multi-device) */
   pairingCode?: string;
+  // 🔒 S25 — Quando backend atinge EVOLUTION_QR_MAX_ATTEMPTS, status
+  // vira 'qr_expired' e o frontend deve parar de pollar + mostrar
+  // botão "Reconectar". Vem true quando o limite foi atingido.
+  qrExpired?: boolean;
+  /** Tentativas atuais de QR (para mensagem "X de Y tentativas"). */
+  qrAttempts?: number;
+  /** Limite máximo de tentativas (env EVOLUTION_QR_MAX_ATTEMPTS, default 5). */
+  qrMaxAttempts?: number;
 }
 
 // ─── Inbox (log temporário de mensagens) ────────────────────────────

@@ -210,17 +210,34 @@ model WhatsappSession {
   status              String    @default("disconnected")
   /// 🔒 S24 — Status intermediário antes de tentar conectar na Evolution.
   /// Criado quando o usuário tenta criar uma sessão sem bot publicado (ou
-  /// config inválida). Fica esperando o owner ajustar — o botão "Conectar"
+  /// config inválida). Fica esperando o owner ajustar — o botão Conectar
   /// /QR fica desabilitado até a config ficar válida.
-  /// Valores: 'disconnected' | 'connecting' | 'connected' | 'draft' | 'error' | 'logged_out'
+  /// Valores: 'disconnected' | 'connecting' | 'connected' | 'draft' | 'error' | 'logged_out' | 'qr_expired'
+  //
+  /// 🔒 S25 — 'qr_expired' é o estado onde a sessão atingiu o limite de
+  /// tentativas de QR sem scan (configurável em EVOLUTION_QR_MAX_ATTEMPTS,
+  /// default 5). Neste estado o backend NÃO gera mais QR e o frontend
+  /// mostra um botão Reconectar. O tenant pode reativar chamando
+  /// POST /:id/reconnect ou /:id/connect, que zera qrAttempts.
   // 🔒 Não armazenamos QR Code nem credenciais do WhatsApp no banco — esses
   // dados ficam no armazenamento persistente da própria Evolution API
-  // (volume Docker /evolution_data). O backend consulta `/instance/connect`
+  // (volume Docker /evolution_data). O backend consulta /instance/connect
   // para obter o QR atual sob demanda no endpoint GET /sessions/:id/qr.
   // webhookSecretHash guarda o hash argon2 do secret gerado por sessão.
-  // Esse secret é enviado à Evolution como header customizado (`headers`)
+  // Esse secret é enviado à Evolution como header customizado (headers)
   // no webhook e usado para validar que o webhook recebido veio dela.
   webhookSecretHash   String?   @map("webhook_secret_hash")
+  /// 🔒 S25 — Contador de QR Codes gerados sem scan. Cada poll de
+  /// getQrCode que devolve um QR novo incrementa. Zerado quando a
+  /// sessão conecta (CONNECTION_UPDATE state=open) ou quando o
+  /// usuário pede /connect ou /reconnect. Se atinge
+  /// EVOLUTION_QR_MAX_ATTEMPTS (default 5), status vira 'qr_expired'.
+  qrAttempts          Int      @default(0) @map("qr_attempts")
+  /// 🔒 S25 — Data do último QR gerado. Usada para debouncing de
+  /// polling: se dois polls chegam dentro de EVOLUTION_QR_DEBOUNCE_MS
+  /// (default 3000ms), servimos o QR anterior sem chamar a Evolution
+  /// de novo. Isso evita spam de /instance/connect durante o polling.
+  qrLastGeneratedAt  DateTime? @map("qr_last_generated_at")
   lastSeen            DateTime? @map("last_seen")
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @updatedAt @map("updated_at")
