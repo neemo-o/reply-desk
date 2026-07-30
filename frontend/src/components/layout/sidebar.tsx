@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Check,
   ChevronUp,
@@ -19,6 +19,7 @@ import {
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Logo } from "@/components/layout/logo";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -34,6 +35,7 @@ import { useAuth } from "@/contexts/auth-provider";
 import { useTheme } from "@/contexts/theme-provider";
 import { useProfile } from "@/hooks/use-profile";
 import { useSessionExpiry } from "@/hooks/use-session-expiry";
+import { useWhatsappSessions } from "@/hooks/use-whatsapp";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
@@ -162,6 +164,17 @@ function SidebarContent({ onNavigate }: SidebarContentProps) {
   const { role } = useAuth();
   const showManagement = role === "owner" || role === "admin";
 
+  // 📱 Badge no sidebar: conta sessões que precisam de atenção do usuário.
+  // `qr_expired` → vermelho (ação obrigatória); `connecting` → amarelo (em andamento).
+  // Só owner/admin veem o badge (agentes não gerenciam sessões).
+  const { data: sessions } = useWhatsappSessions();
+  const needsAttention = useMemo(() => {
+    if (!showManagement || !sessions) return 0;
+    return sessions.filter(
+      (s) => s.status === "qr_expired" || s.status === "connecting",
+    ).length;
+  }, [showManagement, sessions]);
+
   return (
     <div className="flex h-full flex-col">
       {/* Logo */}
@@ -201,6 +214,8 @@ function SidebarContent({ onNavigate }: SidebarContentProps) {
         </p>
         {ATTENDANCE_ITEMS.map((item) => {
           const Icon = item.icon;
+          // 📱 Badge: só para a rota de Sessões e só quando há contagem > 0.
+          const showItemBadge = item.to === "/dashboard/whatsapp" && needsAttention > 0;
           return (
             <NavLink
               key={item.to}
@@ -217,7 +232,12 @@ function SidebarContent({ onNavigate }: SidebarContentProps) {
               }
             >
               <Icon className="h-4.5 w-4.5 shrink-0" />
-              {item.label}
+              <span className="flex-1">{item.label}</span>
+              {showItemBadge && (
+                <Badge variant="warning" className="ml-auto h-5 min-w-5 justify-center px-1.5 tabular-nums">
+                  {needsAttention}
+                </Badge>
+              )}
             </NavLink>
           );
         })}

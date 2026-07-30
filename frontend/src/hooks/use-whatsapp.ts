@@ -33,7 +33,17 @@ export function useWhatsappSession(sessionId: string | null | undefined) {
     queryKey: [...WHATSAPP_KEY(tenant?.id), "session", sessionId],
     queryFn: () => whatsappService.getOne(sessionId as string),
     enabled: isAuthenticated && Boolean(tenant) && Boolean(sessionId),
-    refetchInterval: 5_000,
+    // 🔒 S25-c — Polling dinâmico da lista de sessões: só refetch a cada 5s
+    // enquanto status for intermediário (qrcode_pending, connecting).
+    // Em estados estáveis (connected, qr_expired, disconnected) paramos:
+    // não há nada pra atualizar até o usuário agir. Em especial, em
+    // qr_expired o usuário precisa clicar em "Reconectar" — não há
+    // motivo pra continuar batendo no backend.
+    refetchInterval: (q) => {
+      const status = (q.state.data as WhatsappSession | undefined)?.status;
+      if (status === "qrcode_pending" || status === "connecting") return 5_000;
+      return false;
+    },
   });
 }
 
@@ -66,9 +76,13 @@ export function useReconnectSession() {
 }
 
 /**
- * 🔒 S23 — "Logout" agora é "Desconectar (trocar celular)": gera QR novo.
- * O toast explica: a sessão volta para qrcode_pending e o frontend já
- * começa a pollar o QR automaticamente.
+ * 🔒 S23 — "Logout" agora é "Desconectar (trocar celular)": remove a
+ * instância da Evolution (inclui credenciais em /evolution_data), ou
+ * seja, o WhatsApp do celular atual perde acesso à sessão. A sessão
+ * ReplyDesk fica em status `disconnected` — para gerar QR novo e
+ * conectar outro número, o usuário precisa clicar em "Reconectar".
+ * 🔒 S25-d — Antes voltávamos em qrcode_pending automaticamente; agora a
+ * volta é `disconnected` e o user explicitamente pede reconexão.
  */
 export function useLogoutSession() {
   const queryClient = useQueryClient();
@@ -76,7 +90,7 @@ export function useLogoutSession() {
     mutationFn: (id: string) => whatsappService.logout(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["whatsapp"] });
-      toast.success("Desconectado. Escaneie o QR Code novo para conectar outro número.");
+      toast.success("Desconectado. Clique em \"Reconectar\" para gerar um QR Code novo.");
     },
     onError: (err) => {
       toast.error(extractApiErrorMessage(err, "Não foi possível desconectar a sessão."));

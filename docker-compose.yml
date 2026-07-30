@@ -180,7 +180,12 @@ services:
     healthcheck:
       # Ping no endpoint /instance/fetchInstances com apikey esperado 401,
       # mas indica que o servidor HTTP subiu. O test precisa aceitar qq código.
-      test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/manager/findInstances | grep -qE '^[1-5]'"]
+      # 🔧 Fix: a imagem oficial da Evolution API não vem com `curl` — usamos
+      # `wget` (presente) + `-S` (dump headers) pra extrair o status code,
+      # e aceitamos qualquer HTTP status 1xx-5xx como sinal de que o servidor
+      # está respondendo. Antes: `curl ... | grep -qE '^[1-5]'` falhava por
+      # `curl: not found` → container marcado unhealthy mesmo com serviço OK.
+      test: ["CMD-SHELL", "wget -S -O /dev/null http://localhost:8080/manager/findInstances 2>&1 | grep -qE 'HTTP/[0-9.]+ [1-5]'"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -272,6 +277,12 @@ services:
         condition: service_healthy
       evolution-api:
         condition: service_started
+    # 🔧 Fix: o Dockerfile do backend define HEALTHCHECK pra API HTTP (porta 3000),
+    # mas o worker é só processador BullMQ — não abre servidor HTTP. Herdar esse
+    # healthcheck fazia o worker ficar marcado unhealthy pra sempre. Aqui
+    # desabilitamos o healthcheck herdado da imagem.
+    healthcheck:
+      disable: true
     logging:
       driver: json-file
       options:

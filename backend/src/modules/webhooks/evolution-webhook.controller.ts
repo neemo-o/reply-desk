@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { EvolutionWebhooksService } from './evolution-webhooks.service';
+import { WebhookMetricsService } from './webhook-metrics.service';
 import { WhatsappSessionsService } from '../whatsapp-sessions/whatsapp-sessions.service';
 import { Public } from '../../common/decorators/public.decorator';
 
@@ -26,7 +27,8 @@ import { Public } from '../../common/decorators/public.decorator';
  *   1. Pegamos `instance` (sessionName) do body → identifica a sessão.
  *   2. Buscamos a sessão no DB e argon2.verify(header vs webhookSecretHash).
  *   3. Se válido, processamos o evento (EvolutionWebhooksService).
- *   4. Se inválido: 403 Forbidden (sem revelar qq detalhe).
+ *   4. Se inválido: 403 Forbidden (sem revelar qq detalhe) + métrica
+ *      granular via `WebhookMetricsService` (reason + instanceName).
  *
  * Exemplo body da Evolution:
  *   {
@@ -48,6 +50,7 @@ export class EvolutionWebhookController {
   constructor(
     private readonly evolutionWebhooksService: EvolutionWebhooksService,
     private readonly sessionsService: WhatsappSessionsService,
+    private readonly metrics: WebhookMetricsService,
   ) {}
 
   @Public()
@@ -60,6 +63,8 @@ export class EvolutionWebhookController {
   ) {
     const instanceName = body?.instance;
     if (!instanceName) {
+      // 📊 Métrica diferenciada: body malformado (possível ataque/scanner).
+      this.metrics.inc('missing_instance');
       this.logger.warn('webhook Evolution sem campo `instance`');
       throw new ForbiddenException('Instância não informada');
     }
@@ -67,12 +72,17 @@ export class EvolutionWebhookController {
     const signature = headers['x-evolution-signature'];
     const signatureStr = Array.isArray(signature) ? signature[0] : signature;
 
-    const valid = await this.sessionsService.verifyWebhookSignature(
+    // 🔒 Usa a versão detalhada para métrica granular por motivo.
+    const result = await this.sessionsService.verifyWebhookSignatureDetailed(
       instanceName,
       signatureStr,
     );
-    if (!valid) {
-      this.logger.warn(`webhook Evolution rejeitado — assinatura inválida para instância "${instanceName}"`);
+    if (!result.valid) {
+      this.metrics.inc(result.reason, instanceName);
+      // 📊 Log sem revelar a assinatura recebida — só o motivo.
+      this.logger.warn(
+        `webhook Evolution rejeitado — reason=${result.reason} instância="${instanceName}"`,
+      );
       throw new ForbiddenException('Assinatura do webhook inválida');
     }
 

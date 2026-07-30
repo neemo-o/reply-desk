@@ -427,12 +427,17 @@ function SessionDetail({
 }) {
   // 🔒 S23 — Polling do QR só quando:
   //  - usuário é owner/admin (agentes não precisam de QR)
-  //  - sessão está aguardando QR ou conectando
+  //  - sessão está aguardando QR
   // 🔒 S25 — Sessão em qr_expired NÃO entra em polling. O backend já
   // não gera QR; o frontend mostra mensagem + botão "Reconectar".
+  // 🔒 S25-b — NÃO pollamos em `connecting`. Cada poll chama
+  // /instance/connect na Evolution, que incrementa qrAttempts e pode
+  // levar direto a qr_expired. Só habilitamos a polling quando o status
+  // for exatamente `qrcode_pending` — estados intermediários (connecting,
+  // em logout, etc) ficam de fora até o backend confirmar que há QR
+  // pronto para ser exibido.
   const needsQr =
-    canManage &&
-    (session.status === "qrcode_pending" || session.status === "connecting");
+    canManage && session.status === "qrcode_pending";
   const qrExpired = session.status === "qr_expired";
 
   // 📱 Hook unificado para o QR Code — substitui o loop manual antigo.
@@ -653,16 +658,32 @@ function SessionDetail({
             variant="outline"
             size="sm"
             onClick={() => reconnect.mutate(session.id)}
-            // 🔒 S25 — Habilita Reconectar também em qr_expired: este é o
-            // ÚNICO caminho para sair desse estado (zera qrAttempts no DB).
+            // 🔒 S25-d — Botão "Reconectar" habilitado quando os QR Codes
+            // param de ser gerados automaticamente. Isso só acontece em 2
+            // estados:
+            //  - qr_expired: atingiu o limite de 5 tentativas sem scan; o
+            //    backend não gera mais QR. Reconectar zera qrAttempts e recria
+            //    a instância na Evolution, voltando pra qrcode_pending.
+            //  - disconnected: sessão desconectada e NENHUM QR está sendo
+            //    gerado (porque o deleteInstance no logout removeu a
+            //    instância da Evolution). Reconectar recria a instância e
+            //    volta pra qrcode_pending/qrcode.
+            // Em todos os outros estados (qrcode_pending, connecting,
+            // connected) o botão fica desabilitado:
+            //  - qrcode_pending/connecting: tem QR sendo gerado, ainda não
+            //    faz sentido "reconectar" — espere expirar ou escaneie.
+            //  - connected: já está conectado, nada a reconectar.
             disabled={
               reconnect.isPending ||
-              session.status === "connected"
+              (session.status !== "qr_expired" &&
+                session.status !== "disconnected")
             }
             title={
               session.status === "qr_expired"
                 ? "Reconectar — zera o limite e gera um QR Code novo"
-                : "Reconectar — gera um QR Code novo"
+                : session.status === "disconnected"
+                  ? "Reconectar — recria a instância na Evolution e gera um QR Code novo"
+                  : "Reconectar disponível apenas em QR expirado ou sessão desconectada"
             }
           >
             <RefreshCw className={cn("h-4 w-4", reconnect.isPending && "animate-spin")} />
@@ -672,14 +693,17 @@ function SessionDetail({
             variant="outline"
             size="sm"
             onClick={() => logout.mutate(session.id)}
-            // 🔒 S25 — Permite Desconectar mesmo em qr_expired (logout zera
-            // qrAttempts via restart na Evolution e volta para qrcode_pending).
+            // 🔒 S25-d — Desconectar só faz sentido quando há uma conexão
+            // ativa: status === "connected". Antes o botão aparecia ativo
+            // também em qr_expired ("desconectar algo que já está
+            // desconectado"), o que confundia o usuário. Em todos os
+            // outros estados (qrcode_pending, connecting, disconnected,
+            // qr_expired) o botão fica desabilitado.
             disabled={
               logout.isPending ||
-              session.status === "qrcode_pending" ||
-              session.status === "connecting"
+              session.status !== "connected"
             }
-            title="Desconectar — reseta a sessão e mostra QR Code novo (para trocar de número)"
+            title="Desconectar — remove a sessão do WhatsApp na Evolution e mostra QR Code novo (para trocar de número)"
           >
             <LogOut className="h-4 w-4" />
             Desconectar

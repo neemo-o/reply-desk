@@ -53,6 +53,11 @@ export function useSessionQr(
       if (data?.connected || data?.qrExpired) return false;
       if (q.state.error) {
         const errCount = consecutiveErrorsRef.current;
+        // 🔒 S25-b — Após 3 erros consecutivos, paramos a polling em silêncio.
+        // Caso contrário continuamos batendo /qr (que incrementa qrAttempts)
+        // mesmo quando o backend está rejeitando — combinando com o bug do
+        // logout, podia levar direto a qr_expired.
+        if (errCount >= 3) return false;
         return Math.min(16_000, 1_000 * 2 ** (errCount - 1));
       }
       return 2_000;

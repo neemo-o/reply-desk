@@ -290,13 +290,12 @@ export class WhatsappSessionsController {
   }
 
   /**
-   * 🔒 S23 — Logout (botão "Desconectar"): NÃO encerra mais a instância na
-   * Evolution. Em vez disso, chama `restart` na Evolution para forçar a
-   * regeneração do QR Code. O status vira `qrcode_pending` e o phone é
-   * zerado (próximo QR pode ser outro número).
-   *
-   * O frontend automaticamente começa a pollar o QR novamente porque
-   * status == qrcode_pending.
+   * 🔒 S23 — Logout (botão "Desconectar"): remove a instância da Evolution
+   * (inclui credenciais em /evolution_data), impedindo que o Baileys
+   * reconecte sozinho no mesmo número. O status vira `disconnected` e o
+   * phone é zerado. O usuário precisa clicar em "Reconectar" pra gerar um
+   * QR Code novo e conectar outro número (ou o mesmo). Veja
+   * `WhatsappSessionsService.logout` pra detalhes.
    */
   @Post(':id/logout')
   @HttpCode(HttpStatus.OK)

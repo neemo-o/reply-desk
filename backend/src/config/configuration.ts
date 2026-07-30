@@ -57,8 +57,15 @@ export default () => ({
     // /instance/connect na Evolution de novo. Crítico para evitar
     // race com webhook CONNECTION_UPDATE state=open (cada /instance/connect
     // recria a sessão Baileys e derruba a conexão recém-estabelecida).
-    // Env: EVOLUTION_QR_DEBOUNCE_MS, default 3000.
-    qrDebounceMs: parseInt(process.env.EVOLUTION_QR_DEBOUNCE_MS ?? '3000', 10),
+    // 🔒 S25-c — Default aumentado de 3000 → 20000 (20s). A Evolution
+    // regenera QRs automaticamente a cada ~30-45s (visto em produção),
+    // então 20s é seguro e reduz drasticamente o número de /instance/connect
+    // originados por polls do frontend. Com 2s de refetchInterval no
+    // frontend e 3s de debounce antigo, ~5 polls em 15s produziam 5
+    // connect()s — o que por si só não virava qr_expired, mas derrubava
+    // QRs recém-escaneados. Com 20s, apenas ~1 connect() a cada 20s.
+    // Env: EVOLUTION_QR_DEBOUNCE_MS, default 20000.
+    qrDebounceMs: parseInt(process.env.EVOLUTION_QR_DEBOUNCE_MS ?? '20000', 10),
   },
   stripe: {
     secretKey: process.env.STRIPE_SECRET_KEY,

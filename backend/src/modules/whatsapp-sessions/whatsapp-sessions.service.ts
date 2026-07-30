@@ -60,10 +60,12 @@ export class WhatsappSessionsService {
    * cada /instance/connect da Evolution derruba a conexão recém feita.
    *
    * Chave: sessionId do nosso banco (UUID interno), não sessionName da
-   * Evolution. TTL = EVOLUTION_QR_DEBOUNCE_MS (default 3s). Map simples
-   * em memória; cada entrada guarda o QR base64 + timestamp de geração.
-   * Se o processo reiniciar, o cache some (tudo bem — o usuário só vê
-   * um QR novo após 3s no pior caso).
+   * Evolution. TTL = EVOLUTION_QR_DEBOUNCE_MS (default 20s). Map simples
+   * em memória; cada entrada guarda o QR base64 + code + timestamp de
+   * geração. Se o processo reiniciar, o cache some (tudo bem — o usuário
+   * só vê um QR novo após 20s no pior caso).
+   * 🔒 S25-c — O campo `code` também é usado pra detectar se a Evolution
+   * devolveu um QR NOVO ou o mesmo (qrAttempts só conta QRs únicos).
    */
   private readonly qrCache = new Map<string, { qrcode: string; code?: string; pairingCode?: string; generatedAt: number }>();
 
@@ -909,43 +911,159 @@ export class WhatsappSessionsService {
       };
     }
 
+    // 🔒 S25-b — Pré-check do estado real na Evolution ANTES de chamar
+    // /instance/connect. Cobre a race condition em que o usuário escaneou
+    // o QR, a Evolution já marcou state=open, MAS o webhook
+    // CONNECTION_UPDATE ainda não chegou no backend (lag de rede).
+    //
+    // Se chamar /instance/connect nesse momento, a Evolution Reinicia o
+    // Baileys e derruba exatamente a conexão que acabou de estabelecer —
+    // voltando pra "connecting" e invalidando o QR escaneado.
+    //
+    // fetchInstance é read-only (GET /instance/fetchInstances) e devolve
+    // o estado atual. Se vier state=open/connected, consideramos a
+    // sessão conectada já; deixamos o webhook chegar naturalmente pra
+    // markConnected() e não chamamos connect. (Silenciosamente: se
+    // fetchInstance falhar, seguimos pelo caminho antigo.)
+    try {
+      const details = await this.evolution.fetchInstance(session.sessionName);
+      const evState =
+        (details?.instance?.state as string | undefined) ??
+        ((details?.data as Record<string, unknown> | undefined)?.state as string | undefined) ??
+        ((details?.data as Record<string, unknown> | undefined)?.connection as string | undefined);
+      if (evState && ['open', 'connected'].includes(evState.toLowerCase())) {
+        this.qrCache.delete(session.id);
+        this.logger.log(
+          `getQrCode: Evolution reporta state="${evState}" para ${session.sessionName} ` +
+          `(webhook ainda não confirmou). Devolvendo connected=true sem chamar /instance/connect.`,
+        );
+        return { connected: true };
+      }
+    } catch (err) {
+      // Não bloqueia — pode ser que a instância ainda não exista (job em
+      // fila). Prossegue para o caminho original (evolution.connect).
+      this.logger.debug(
+        `getQrCode: fetchInstance pré-check falhou para ${session.sessionName}: ${(err as Error).message}`,
+      );
+    }
+
     try {
       const qr = await this.evolution.connect(session.sessionName);
 
-      // 🔒 S25 — Incrementa qrAttempts e checa limite ANTES de devolver.
-      // Usamos updateMany para ser atômico (sem read-modify-write):
-      //   1) incrementa para novo valor
-      //   2) se novo >= max, marca status='qr_expired'
-      // Tudo num único round-trip ao DB.
-      const incrementResult = await this.prisma.whatsappSession.update({
-        where: { id: session.id },
-        data: {
-          qrAttempts: { increment: 1 },
-          qrLastGeneratedAt: new Date(),
-          status: 'qrcode_pending',
-          lastSeen: new Date(),
-        },
-        select: { qrAttempts: true },
-      });
-      const newAttempts = incrementResult.qrAttempts;
+      // 🔒 S25-c — Conta QRs ÚNICOS, não cache misses.
+      //
+      // ANTES: cada cache miss incrementava qrAttempts. Com polls a cada
+      // 2s e cache de 3s, em ~15s o frontend fazia 8 polls, ~5 cache misses
+      // -> 5 incrementos -> qr_expired. Era o bug observado: a sessão
+      // caía em qr_expired SEM o usuário ter chegado a escanear o QR.
+      //
+      // AGORA: só incrementamos qrAttempts quando a Evolution devolve um
+      // QR com `code` DIFERENTE do último QR já devolvido pra essa sessão.
+      // Assim:
+      //  - polls repetidos no mesmo QR (cache expira, mas a Evolution
+      //    devolve o mesmo code) NÃO incrementam.
+      //  - cada QR NOVO que a Evolution gera (regeneração automática a
+      //    cada ~30s, ou após logout/reconnect) conta como 1 tentativa.
+      //  - o `qrCache` ainda protege contra spam de /instance/connect
+      //    dentro do debounce; o branch abaixo é o caminho cold.
+      const prevCache = this.qrCache.get(session.id);
+      const prevCode = prevCache?.code;
+      const isQrNovo = qr.code !== prevCode && qr.base64 !== prevCache?.qrcode;
 
-      if (newAttempts >= this.qrMaxAttempts) {
-        // Esgotou tentativas: marca terminal e loga.
-        await this.updateStatus(session.id, 'qr_expired');
-        this.qrCache.delete(session.id);
-        await this.logEvent(session.id, tenantId, 'qr_expired', {
-          message: `Limite de ${this.qrMaxAttempts} tentativas de QR atingido. Reconecte para gerar um novo QR.`,
-          metadata: { qrAttempts: newAttempts, qrMaxAttempts: this.qrMaxAttempts },
+      // 🔒 S25-b — Race condition "escaneou mas poll ainda incrementa QR":
+      // só incrementa qrAttempts + seta status=qrcode_pending SE o status
+      // atual ainda for um dos "aguardando QR" (qrcode_pending/connecting)
+      // E SE o QR for efetivamente novo. updateMany atômico garante que
+      // não sobrescrevemos `connected` se o webhook chegou entre o findOne
+      // e este update. Se o webhook já mudou pra connected/disconnected/
+      // qr_expired, o updateMany afeta 0 linhas e devolvemos o estado
+      // real mais recente sem incrementar.
+      let newAttempts = session.qrAttempts ?? 0;
+      if (isQrNovo) {
+        const incrementResult = await this.prisma.whatsappSession.updateMany({
+          where: {
+            id: session.id,
+            status: { in: ['qrcode_pending', 'connecting'] },
+          },
+          data: {
+            qrAttempts: { increment: 1 },
+            qrLastGeneratedAt: new Date(),
+            status: 'qrcode_pending',
+            lastSeen: new Date(),
+          },
         });
-        this.logger.warn(
-          `session ${session.id}: limite de QR atingido (${newAttempts}/${this.qrMaxAttempts}) — status=qr_expired`,
+
+        // 🔒 S25-b — 0 linhas afetadas = outra transição ganhou a corrida
+        // (webhook connected, disconnected, ou qr_expired de outra thread).
+        // NÃO incrementamos qrAttempts nem sobrescrevemos status. Devolvemos
+        // o estado atual real: conectado (saída limpa) ou qr_expired (UI
+        // mostra botão Reconectar).
+        if (incrementResult.count === 0) {
+          const fresh = await this.findOne(tenantId, session.id);
+          this.logger.log(
+            `getQrCode: race evitada — sessão ${session.id} ` +
+            `mudou pra status="${fresh.status}" durante o connect. ` +
+            `Devolvendo estado atual sem incrementar qrAttempts.`,
+          );
+          if (fresh.status === 'connected') {
+            this.qrCache.delete(session.id);
+            return { connected: true };
+          }
+          if (fresh.status === 'qr_expired') {
+            return {
+              connected: false,
+              qrExpired: true,
+              qrAttempts: fresh.qrAttempts ?? 0,
+              qrMaxAttempts: this.qrMaxAttempts,
+            };
+          }
+          // Status virou disconnected/etc — não há QR a devolver.
+          return { connected: false };
+        }
+
+        // Incrementamos uma linha — relê qrAttempts atual para checar limite.
+        const afterIncrement = await this.prisma.whatsappSession.findUnique({
+          where: { id: session.id },
+          select: { qrAttempts: true },
+        });
+        newAttempts = afterIncrement?.qrAttempts ?? 0;
+
+        if (newAttempts >= this.qrMaxAttempts) {
+          // Esgotou tentativas: marca terminal e loga.
+          await this.updateStatus(session.id, 'qr_expired');
+          this.qrCache.delete(session.id);
+          await this.logEvent(session.id, tenantId, 'qr_expired', {
+            message: `Limite de ${this.qrMaxAttempts} tentativas de QR atingido. Reconecte para gerar um novo QR.`,
+            metadata: { qrAttempts: newAttempts, qrMaxAttempts: this.qrMaxAttempts },
+          });
+          this.logger.warn(
+            `session ${session.id}: limite de QR atingido (${newAttempts}/${this.qrMaxAttempts}) — status=qr_expired`,
+          );
+          return {
+            connected: false,
+            qrExpired: true,
+            qrAttempts: newAttempts,
+            qrMaxAttempts: this.qrMaxAttempts,
+          };
+        }
+      } else {
+        // QR igual ao anterior: não é "tentativa nova", só reforça status
+        // qrcode_pending (sem incrementar) e lastSeen. Mesma guarda atômica
+        // pra não sobrescrever connected se o webhook já chegou.
+        await this.prisma.whatsappSession.updateMany({
+          where: {
+            id: session.id,
+            status: { in: ['qrcode_pending', 'connecting'] },
+          },
+          data: {
+            lastSeen: new Date(),
+            // Não toca em qrAttempts nem qrLastGeneratedAt.
+          },
+        });
+        this.logger.debug(
+          `getQrCode: QR idêntico ao anterior para ${session.id} — ` +
+          `qrAttempts preservado em ${newAttempts}.`,
         );
-        return {
-          connected: false,
-          qrExpired: true,
-          qrAttempts: newAttempts,
-          qrMaxAttempts: this.qrMaxAttempts,
-        };
       }
 
       // Cacheia o QR recém-gerado para coalescer os próximos polls.
@@ -1099,57 +1217,103 @@ export class WhatsappSessionsService {
   }
 
   /**
-   * 🔒 S23 — "Logout" muda de significado: agora é "quero trocar de celular"
-   * (ou desconectar o celular atual). Em vez de encerrar a sessão na
-   * Evolution (o que mantém o device emparelhado e não mostra QR novo),
-   * chamamos `restart` na Evolution, que força o Baileys a regenerar o QR.
+   * 🔒 S23 — "Logout" significa "quero desconectar / trocar de celular". Para
+   * trocar de número de fato é preciso remover as credenciais persistidas em
+   * /evolution_data — caso contrário o Baileys reconecta automaticamente
+   * usando essas credenciais. Por isso usamos `deleteInstance` da Evolution
+   * (DELETE /instance/delete/{name}), que remove a instância AND os arquivos
+   * auth do Baileys, impossibilitando reconexão pelo mesmo número.
    *
-   * Se o usuário realmente quer remover permanentemente, usa "Excluir".
+   * Diferente de `delete()` (que apaga a sessão ReplyDesk do banco), o
+   * `logout` preserva a sessão no DB e só zera `evolutionInstanceId` — o
+   * histórico de conversas, settings e o nome da sessão permanecem. O
+   * usuário pode então clicar em "Reconectar" pra gerar um QR novo.
+   *
+   * 🔒 S25-d — Status final: `disconnected` (NÃO `qrcode_pending`).
+   * Antes eu setava `qrcode_pending` achando que QR novo viria sozinho,
+   * mas como removemos a instância via `deleteInstance`, NENHUM QR é
+   * gerado automaticamente — não há instância pra gerar. Setar
+   * `qrcode_pending` era uma mentira pro usuário (UI mostrava spinner
+   * de QR infinito). Com `disconnected` a UI mostra estado "desconectado"
+   * e o botão "Reconectar" ativa — só ao clicar o usuário tem QR novo.
+   *
+   * BUG PREVENTIDO: ANTES usávamos `evolution.logout()` (DELETE
+   * /instance/logout/{name}). Esse só avisa o Baileys pra fechar a conexão
+   * WebSocket momentaneamente, mas as credenciais em /evolution_data
+   * continuavam válidas. Resultado: o celular continuava "conectado" no
+   * WhatsApp mesmo depois do usuário clicar em Desconectar, e a Evolution
+   * voltava a mandar CONNECTION_UPDATE state=connecting sozinha tentando
+   * reconectar no mesmo número.
+   *
+   * RACE: o webhook `CONNECTION_UPDATE state=close` chega logo após o
+   * `deleteInstance` (devido ao fechamento da conexão pelo Baileys).
+   * Antes, esse webhook sobrescrevia `qrcode_pending` → `disconnected`,
+   * mas como agora o `logout` também seta `disconnected`, não há
+   * conflito — o status final é consistentemente `disconnected`.
    *
    * Comportamento:
-   *  - Status vira `qrcode_pending` (mostra QR novo no UI)
-   *  - phone é zerado (o próximo a escanear pode ser outro número)
+   *  - Instância removida da Evolution (inclui /evolution_data)
+   *  - `evolutionInstanceId` no DB setado pra null (próximo connect recria)
+   *  - Status `disconnected` (UI mostra "Desconectado", botão Reconnect ativa)
+   *  - 🔒 S25 — Zera qrAttempts + limpa qrCache
+   *  - phone é zerado (não há conexão ativa com nenhum número)
    *  - Evento `logout` é logado
-   *
-   * Se a Evolution não tem a instância, caímos no fluxo de recriação.
    */
   async logout(tenantId: string, id: string): Promise<{ status: string }> {
     const session = await this.findOne(tenantId, id);
 
-    // Tenta restart da instância na Evolution — isso regenera o QR sem
-    // destruir credenciais existentes, permitindo reconexão com o MESMO
-    // número se o usuário apenas reiniciou o celular.
+    // 🔒 S25-b — Zera contador de tentativas e cache antes de chamar a
+    // Evolution. Sem isso, a polling do frontend que já estava rodando
+    // (em estado connecting/qrcode_pending legado) continuaria chamando
+    // getQrCode e incrementando qrAttempts enquanto o logout ainda
+    // processava, levando direto a qr_expired logo após desconectar.
+    await this.resetQrAttempts(session.id);
+
+    // Delete da instância na Evolution encerra a sessão do WhatsApp E
+    // remove os arquivos de credenciais em /evolution_data. Usa DELETE
+    // /instance/delete/{name} (não /instance/logout). Importante: isso
+    // APAGA a instância da Evolution, mas preserva nossa sessão no DB.
+    // O próximo /:id/connect (ou /:id/reconnect) recria a instância —
+    // porque marcamos evolutionInstanceId=null abaixo (caminho de recriação
+    // do serviço).
     try {
-      await this.evolution.restart(session.sessionName);
+      await this.evolution.deleteInstance(session.sessionName);
     } catch (err) {
       if (err instanceof NotFoundException) {
-        // A instância foi removida da Evolution — vamos só marcar para reconexão.
+        // A instância foi removida da Evolution — tudo bem, é o estado
+        // que queríamos alcançar de qualquer forma.
         this.logger.warn(
-          `logout: instância ${session.sessionName} não existe na Evolution — fluindo para reconexão`,
+          `logout: instância ${session.sessionName} não existe na Evolution — ` +
+          `marcando pra recriar no próximo connect`,
         );
       } else {
         // Outro erro — logamos mas não abortamos. O importante é o status.
-        this.logger.warn(`logout: restart falhou: ${(err as Error).message}`);
+        this.logger.warn(`logout: deleteInstance falhou: ${(err as Error).message}`);
       }
     }
 
-    // Marca status como qrcode_pending e zera o phone/profileName — o próximo QR
-    // pode ser escaneado por outro número, então não faz sentido manter.
+    // 🔒 S25-d — Marca status como `disconnected` (não qrcode_pending):
+    // acabamos de remover a instância da Evolution, então NENHUM QR está
+    // disponível. O usuário tem que clicar em "Reconectar" pra recriar a
+    // instância e gerar QR novo. Em `disconnected` a UI mostra estado
+    // "Desconectado" e o botão Reconnect é habilitado (perfazente do
+    // meu comentário S25-d acima).
     await this.prisma.whatsappSession.update({
       where: { id: session.id },
       data: {
-        status: 'qrcode_pending',
+        status: 'disconnected',
         phone: null,
         profileName: null,
+        evolutionInstanceId: null,
         lastSeen: new Date(),
       },
     });
 
     await this.logEvent(session.id, tenantId, 'logout', {
-      message: 'Desconectado pelo usuário — QR Code regenerado',
+      message: 'Desconectado pelo usuário — instância removida da Evolution',
     });
 
-    return { status: 'qrcode_pending' };
+    return { status: 'disconnected' };
   }
 
   /**
@@ -1343,6 +1507,39 @@ export class WhatsappSessionsService {
       return await argon2.verify(session.webhookSecretHash, providedSignature);
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * 🔒 Versão detalhada de `verifyWebhookSignature` que devolve o motivo
+   * da rejeição — usado pelo `EvolutionWebhookController` para emitir
+   * métricas granulares via `WebhookMetricsService`.
+   *
+   * Retornos:
+   *  - { valid: true }                                     ✓ aceito
+   *  - { valid: false, reason: 'missing_signature' }       sem header
+   *  - { valid: false, reason: 'unknown_session' }        sessão não existe
+   *  - { valid: false, reason: 'invalid_signature' }     argon2 mismatch
+   */
+  async verifyWebhookSignatureDetailed(
+    sessionName: string,
+    providedSignature: string | undefined,
+  ): Promise<
+    | { valid: true }
+    | { valid: false; reason: 'missing_signature' | 'unknown_session' | 'invalid_signature' }
+  > {
+    if (!providedSignature) {
+      return { valid: false, reason: 'missing_signature' };
+    }
+    const session = await this.findBySessionName(sessionName);
+    if (!session?.webhookSecretHash) {
+      return { valid: false, reason: 'unknown_session' };
+    }
+    try {
+      const ok = await argon2.verify(session.webhookSecretHash, providedSignature);
+      return ok ? { valid: true } : { valid: false, reason: 'invalid_signature' };
+    } catch {
+      return { valid: false, reason: 'invalid_signature' };
     }
   }
 }
