@@ -535,6 +535,12 @@ export class WhatsappSessionsService {
    * fallback ao webhook. A resposta de fetchInstances varia entre builds da
    * Evolution, por isso a extração aceita os formatos usuais (ownerJid, wid,
    * number e phoneNumber; profileName/profileName do objeto externo).
+   *
+   * 🔒 Importante: o `fetchInstances` da Evolution devolve `profileName=null`
+   * (confirmado em produção) — esse endpoint NÃO entrega o nome do perfil.
+   * Por isso, quando o extractor não acha o nome mas conseguimos o telefone,
+   * fazemos uma chamada complementar ao `fetchProfile` (POST /chat/fetchProfile)
+   * que devolve o nome real (`name`/`pushName`/`businessProfile.name`).
    */
   private async syncConnectedDetails(
     sessionId: string,
@@ -543,7 +549,14 @@ export class WhatsappSessionsService {
     try {
       const instance = await this.evolution.fetchInstance(sessionName);
       const phone = this.extractEvolutionPhone(instance);
-      const profileName = this.extractEvolutionProfileName(instance);
+      let profileName = this.extractEvolutionProfileName(instance);
+
+      // Fallback: quando fetchInstances não trouxe o nome (comum), mas
+      // temos o telefone, consultamos o perfil real via /chat/fetchProfile.
+      if (!profileName && phone) {
+        profileName = await this.fetchProfileName(sessionName, phone);
+      }
+
       const updates: { phone?: string; profileName?: string } = {};
       if (phone) updates.phone = phone;
       if (profileName) updates.profileName = profileName;
@@ -563,6 +576,86 @@ export class WhatsappSessionsService {
         `session ${sessionId}: não foi possível sincronizar detalhes da Evolution: ${(err as Error).message}`,
       );
       return { phone: null, profileName: null };
+    }
+  }
+
+  /**
+   * Sincroniza (sob demanda) apenas o nome do perfil de uma sessão já
+   * conectada. Usado pelo webhook CONNECTION_UPDATE (state=open) logo após
+   * a conexão, pra que o nome apareça na UI desde a primeira listagem —
+   * sem precisar esperar o fallback do findAll.
+   *
+   * @returns O profileName encontrado (string já trimmed) ou `null` se a
+   *          Evolution não devolveu um nome válido/ou se houve erro.
+   *          Em caso de erro, loga em debug e retorna null (não propaga).
+   */
+  async syncProfileName(
+    sessionId: string,
+    sessionName: string,
+    phone: string,
+  ): Promise<string | null> {
+    try {
+      const profileName = await this.fetchProfileName(sessionName, phone);
+      if (!profileName) return null;
+      await this.prisma.whatsappSession.update({
+        where: { id: sessionId },
+        data: { profileName },
+      });
+      this.logger.log(
+        `session ${sessionId}: profileName sincronizado via fetchProfile ` +
+        `(${phone} → "${profileName}")`,
+      );
+      return profileName;
+    } catch (err) {
+      this.logger.debug(
+        `session ${sessionId}: falha ao sincronizar profileName via fetchProfile: ${(err as Error).message}`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Chama o `POST /chat/fetchProfile/{instance}` da Evolution e extrai o
+   * nome do perfil público do dono do número. A Evolution devolve o nome
+   * em diferentes campos dependendo do tipo de conta:
+   *   - `name`              (pessoa física)
+   *   - `pushName`          (alias em alguns builds Baileys)
+   *   - `businessProfile.name` (conta Business)
+   * Tentamos nessa ordem e descartamos strings vazias / só whitespace.
+   */
+  private async fetchProfileName(
+    sessionName: string,
+    phone: string,
+  ): Promise<string | null> {
+    try {
+      const profile = await this.evolution.fetchProfile(sessionName, phone);
+      const record = (profile ?? {}) as Record<string, unknown>;
+      const candidates: (string | null | undefined)[] = [
+        typeof record.name === 'string' ? record.name : undefined,
+        typeof record.pushName === 'string' ? record.pushName : undefined,
+        typeof record.businessName === 'string' ? record.businessName : undefined,
+      ];
+      const businessProfile = record.businessProfile as
+        | Record<string, unknown>
+        | undefined;
+      if (businessProfile && typeof businessProfile.name === 'string') {
+        candidates.push(businessProfile.name);
+      }
+      for (const c of candidates) {
+        if (typeof c === 'string' && c.trim().length > 0) {
+          return c.trim();
+        }
+      }
+      this.logger.debug(
+        `fetchProfileName(${sessionName}, ${phone}): Evolution não devolveu ` +
+        `nome. Payload=${JSON.stringify(profile).slice(0, 600)}`,
+      );
+      return null;
+    } catch (err) {
+      this.logger.debug(
+        `fetchProfileName(${sessionName}, ${phone}) falhou: ${(err as Error).message}`,
+      );
+      return null;
     }
   }
 

@@ -249,6 +249,22 @@ export class EvolutionWebhooksService {
           `session ${session.id} → connected ` +
           `(phone=${phone ?? '-'} profileName=${profileName ?? '-'})`,
         );
+        // 🔒 profileName: a Evolution não envia o nome do perfil no
+        // CONNECTION_UPDATE (confirmado em produção — payload vem só com
+        // `instance`, `wuid`, `state`, `statusReason`). Quando não temos
+        // o nome mas temos o phone, disparamos em background uma chamada
+        // ao `POST /chat/fetchProfile` que devolve o nome real. Fire-and-
+        // forget: não Bloqueia o webhook (evento de conexão é raro e o
+        // usuário também tem fallback no findAll se esta chamada falhar).
+        if (!profileName && phone) {
+          void this.sessionsService
+            .syncProfileName(session.id, session.sessionName, phone)
+            .catch((err) =>
+              this.logger.debug(
+                `session ${session.id}: syncProfileName em background falhou: ${(err as Error).message}`,
+              ),
+            );
+        }
         break;
       }
       case 'close':

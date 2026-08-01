@@ -281,6 +281,39 @@ export class EvolutionService {
     return this.call('DELETE', `/instance/delete/${encodeURIComponent(instanceName)}`);
   }
 
+  // --- Perfil (consulta de nome do dono do numero) -------------------
+
+  /**
+   * Consulta o perfil publico do dono do numero (o nome que aparece no
+   * WhatsApp quando a conta e de pessoa fisica, ou o nome comercial quando
+   * e Business). A Evolution não envia esse nome nem no webhook
+   * CONNECTION_UPDATE nem no fetchInstances (ambos devolvem profileName=null),
+   * por isso precisamos de uma chamada explícita.
+   *
+   * Endpoint: POST /chat/fetchProfile/{instanceName}
+   *   Body: { number: "<E.164 sem +>" }
+   * Retorno típico (integration WHATSAPP-BAILEYS):
+   *   {
+   *     wuid: "5511999999999@s.whatsapp.net",
+   *     name: "Empresa XY",            // ← nome do perfil (pessoa física)
+   *     pushName: "Empresa XY",         // ← alias em alguns builds
+   *     business: false,
+   *     businessProfile: { name: "..." } // ← só quando conta Business
+   *   }
+   *
+   * @param instanceName Nome da instância conectada.
+   * @param number       Telefone E.164 sem "+" (ex.: "5511999999999").
+   */
+  async fetchProfile(instanceName: string, number: string): Promise<{
+    name?: string | null;
+    pushName?: string | null;
+    business?: boolean;
+    businessProfile?: { name?: string | null } | null;
+  }> {
+    const payload = { number };
+    return this.call('POST', `/chat/fetchProfile/${encodeURIComponent(instanceName)}`, payload);
+  }
+
   // ─── Webhooks (configuração da instância) ──────────────────────────
 
   /**
