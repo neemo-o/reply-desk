@@ -32,8 +32,6 @@ export interface WhatsappSession {
   updatedAt?: string;
   settings?: {
     webhookUrl?: string | null;
-    autoReconnect?: boolean;
-    ignoreGroups?: boolean;
     // 🔒 S24 — campos adicionados pela feature de configuração
     contactFilterMode?: ContactFilterMode;
     activeBotId?: string | null;
@@ -85,18 +83,14 @@ export function normalizeContactFilterMode(raw: unknown): ContactFilterMode {
 }
 
 // 🔒 S24 — Settings completas da sessão (resposta de GET/PATCH
-// /whatsapp/sessions/:id/settings). Alguns campos são só leitura
-// nesta versão (autoReconnect, ignoreGroups, etc.).
+// /whatsapp/sessions/:id/settings).
+// 🔒 P9 — Toggles técnicos (autoReconnect/ignoreGroups/readMessages/
+// typingIndicator/presenceUpdate) removidos: não eram lidos no backend.
 export interface SessionSettings {
   id: string;
   contactFilterMode: ContactFilterMode;
   activeBotId: string | null;
   activeBotVersionId: string | null;
-  autoReconnect: boolean;
-  ignoreGroups: boolean;
-  readMessages: boolean;
-  typingIndicator: boolean;
-  presenceUpdate: boolean;
   webhookUrl: string | null;
 }
 
@@ -104,11 +98,6 @@ export interface UpdateSessionSettingsPayload {
   contactFilterMode?: ContactFilterMode;
   activeBotId?: string | null;
   activeBotVersionId?: string | null;
-  autoReconnect?: boolean;
-  ignoreGroups?: boolean;
-  readMessages?: boolean;
-  typingIndicator?: boolean;
-  presenceUpdate?: boolean;
   webhookUrl?: string;
 }
 

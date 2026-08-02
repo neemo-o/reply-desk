@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 
+const NODE_ENV = process.env.NODE_ENV ?? 'development';
+
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
@@ -56,7 +58,13 @@ export class MailService {
     });
 
     if (!this.config.get<string>('mail.host')) {
-      this.logger.log(`[dev] OTP para ${to}: ${code} (e-mail não enviado de verdade — SMTP não configurado)`);
+      // 🔒 P9 — Só loga OTP em modo não-produção; em prod a ausência de
+      // SMTP_HOST é bloqueada pelo fail-closed de env.validation.ts.
+      if (NODE_ENV !== 'production') {
+        this.logger.log(`[dev] OTP para ${to}: ${code} (e-mail não enviado de verdade — SMTP não configurado)`);
+      } else {
+        this.logger.warn(`Tentativa de envio de OTP sem SMTP_HOST configurado em produção: ${to}`);
+      }
     } else {
       this.logger.log(`OTP enviado para ${to} (messageId=${info.messageId})`);
     }

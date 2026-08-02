@@ -284,14 +284,10 @@ model SessionEvent {
 }
 
 model SessionSettings {
-  id              String  @id @default(uuid())
-  sessionId       String  @unique @map("session_id")
-  webhookUrl      String? @map("webhook_url")
-  autoReconnect   Boolean @default(true) @map("auto_reconnect")
-  ignoreGroups    Boolean @default(true) @map("ignore_groups")
-  readMessages    Boolean @default(false) @map("read_messages")
-  typingIndicator Boolean @default(true) @map("typing_indicator")
-  presenceUpdate  Boolean @default(true) @map("presence_update")
+  id         String  @id @default(uuid())
+  sessionId  String  @unique @map("session_id")
+  webhookUrl String? @map("webhook_url")
+  
 
   // 🔒 S24 — Modo de filtragem de contatos via whitelist.
   // Valores: 'none' | 'whitelist'.

@@ -17,6 +17,9 @@ import { CONTACT_FILTER_MODES, type ContactFilterMode } from './create-session.d
  *
  * Importante: alterar essas configs NÃO fecha a sessão nem força reconexão
  * — o filtro roda no webhook inbound a partir do próximo MESSAGES_UPSERT.
+ *
+ * 🔒 P9 — Toggles técnicos (autoReconnect/ignoreGroups/readMessages/
+ * typingIndicator/presenceUpdate) removidos: não eram lidos em runtime.
  */
 export class UpdateSessionSettingsDto {
   @IsOptional()
@@ -37,19 +40,6 @@ export class UpdateSessionSettingsDto {
   @ValidateIf((_o, v) => v !== null)
   @IsUUID()
   activeBotVersionId?: string | null;
-
-  // Mantemos os toggles técnicos que já existiam no SessionSettings
-  // (alguns fronts podem querer atualizar via esse mesmo endpoint).
-  @IsOptional()
-  autoReconnect?: boolean;
-  @IsOptional()
-  ignoreGroups?: boolean;
-  @IsOptional()
-  readMessages?: boolean;
-  @IsOptional()
-  typingIndicator?: boolean;
-  @IsOptional()
-  presenceUpdate?: boolean;
 
   @IsOptional()
   @IsString()

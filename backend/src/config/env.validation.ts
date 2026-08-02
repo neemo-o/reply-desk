@@ -168,6 +168,13 @@ export function validate(config: Record<string, unknown>) {
     if (!validatedConfig.SMTP_HOST || !validatedConfig.SMTP_USER || !validatedConfig.SMTP_PASS) {
       throw new Error('SMTP_HOST, SMTP_USER e SMTP_PASS são obrigatórios em produção (envio de OTP).');
     }
+    // 🔒 P9 — Evolution API v2 é obrigatória em produção: sem ela as sessões
+    // WhatsApp ficam sem integração. Em dev continua opcional.
+    if (!validatedConfig.EVOLUTION_API_URL || !validatedConfig.EVOLUTION_API_KEY) {
+      throw new Error(
+        'EVOLUTION_API_URL e EVOLUTION_API_KEY são obrigatórios em produção (integração WhatsApp).',
+      );
+    }
   }
 
   return validatedConfig;

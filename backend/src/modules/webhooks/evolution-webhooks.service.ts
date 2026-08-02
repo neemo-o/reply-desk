@@ -85,17 +85,11 @@ export class EvolutionWebhooksService {
       return { ok: true };
     }
 
-    // 🪵 Log do evento para diagnóstico de formato. CONNECTION_UPDATE é o
-    // mais importante: é onde o phone precisa chegar. Se o número não
-    // aparecer na tabela, esse log mostra exatamente que campo a Evolution
-    // preencheu. Outros eventos (MESSAGES_UPSERT) ficam em debug para não
-    // inundar stdout; CONNECTION_UPDATE fica em WARN/INFO porque é raro.
-    const isConnectionEvent =
-      normalizedEvent === 'CONNECTION_UPDATE' || normalizedEvent === 'APPLICATION_STARTUP';
-    (isConnectionEvent ? this.logger.warn : this.logger.debug).call(
-      this.logger,
-      `[${normalizedEvent}] session=${session.id} tenant=${session.tenantId} ` +
-        `state=${session.status} data=${JSON.stringify(raw.data ?? null).slice(0, 600)}`,
+    // 🔒 P9 — Log estruturado por evento sem dump de payload cru (evita PII
+    // em produção). CONNECTION_UPDATE/APPLICATION_STARTUP ficam em `debug`
+    // (silenciado em prod); outros eventos idem.
+    this.logger.debug(
+      `[${normalizedEvent}] session=${session.id} tenant=${session.tenantId} state=${session.status}`,
     );
 
     switch (normalizedEvent) {
@@ -219,15 +213,16 @@ export class EvolutionWebhooksService {
         ? rawProfileName.trim()
         : null;
 
-    // 🪵 Diagnóstico: quando a Evolution diz state=open mas o phone não veio
-    // em nenhum dos formatos mapeados, logamos o payload cru `data` em `warn`.
-    // Sem isso não dá pra saber que campo novo a API usou — e o usuário pega
-    // só "— sem número" na tabela sem entender o motivo.
+    // 🔒 P9 — Diagnóstico quando a Evolution diz state=open mas o phone não
+    // veio em nenhum dos formatos mapeados. Sem dump cru do payload (PII).
+    // O usuário pega "— sem número" na tabela; diagnóstico detalhado só em dev.
     const stateLower = state.toLowerCase();
     if ((stateLower === 'open' || stateLower === 'connected') && !phone) {
       this.logger.warn(
-        `session ${session.id}: CONNECTION_UPDATE state="${state}" sem phone detectável! ` +
-        `Payload cru data=${JSON.stringify(data).slice(0, 800)}`,
+        `session ${session.id}: CONNECTION_UPDATE state="${state}" sem phone detectável`,
+      );
+      this.logger.debug(
+        `session ${session.id}: payload cru data=${JSON.stringify(data).slice(0, 800)}`,
       );
     }
 
@@ -363,9 +358,8 @@ export class EvolutionWebhooksService {
    *  - Extrai número do remetente (parte antes do @s.whatsapp.net).
    *  - Upsert do contato por (tenantId, phone).
    *  - Busca conversa existente (contact+session) ou cria nova.
-   *  - Persiste a mensagem recebida com idempotência (externalId = WA id).
-   *  - Log estruturado (temporário) — o frontend consome via GET /sessions/:id/inbox.
-   *  - Resposta placeholder: se EVO_PLACEHOLDER_OWNER_PHONE estiver definido,
+    *  - Persiste a mensagem recebida com idempotência (externalId = WA id).
+    *  - Resposta placeholder: se EVO_PLACEHOLDER_OWNER_PHONE estiver definido,
    *    só responde a esse número (modo "só responda se for eu"); se vazio,
    *    responde a qualquer número. Em ambos os casos a mensagem recebida é
    *    sempre persistida e logada.
@@ -505,12 +499,12 @@ export class EvolutionWebhooksService {
       conversationId = result.conversationId;
       messageWasCreated = result.created;
 
-      // 🪵 Log estruturado (temporário) — o que o usuário pediu para "logar temporariamente".
-      this.logger.log(
+      // 🔒 P9 — Diagnóstico mínimo (sem conteúdo de mensagem em prod).
+      // O frontend consome a mensagem via GET /sessions/:id/inbox; conteúdo
+      // de texto fica fora dos logs.
+      this.logger.debug(
         `📨 inbound session=${session.id} tenant=${session.tenantId} ` +
-        `phone=${phone} ` +
-        `text=${JSON.stringify(text ?? `[${msg ? Object.keys(msg)[0] : 'unknown'}]`).slice(0, 280)} ` +
-        `conv=${conversationId} ${messageWasCreated ? '(new)' : '(dup)'}`,
+        `phone=${phone} conv=${conversationId} ${messageWasCreated ? '(new)' : '(dup)'}`,
       );
     } catch (err) {
       this.logger.error(`onMessagesUpsert: falha ao persistir mensagem de ${phone}: ${(err as Error).message}`);

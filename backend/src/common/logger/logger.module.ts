@@ -18,13 +18,24 @@ import { LoggerModule as PinoLoggerModule } from 'nestjs-pino';
           process.env.NODE_ENV === 'production'
             ? undefined
             : { target: 'pino-pretty', options: { singleLine: true } },
-        // Redact paths comuns de PII/segredos antes de logar.
+        // 🔒 P9 — Redact paths de PII/segredos antes de logar.
+        // Cobre credenciais HTTP, conteúdo de mensagem Evolution, e segredos
+        // de webhook (assinatura). `body.text/number` cobrem o payload
+        // recebido via webhooks genéricos; `metadata` cobre SessionEvent.
         redact: {
           paths: [
             'req.headers.authorization',
             'req.headers.cookie',
+            'req.headers["x-evolution-signature"]',
+            'req.headers["x-api-key"]',
             'req.body.password',
             'req.body.refreshToken',
+            'req.body.text',
+            'req.body.number',
+            'req.body.qrcode',
+            'req.body.code',
+            'req.body.pairingCode',
+            'req.body.metadata',
             'res.body.accessToken',
             'res.body.refreshToken',
           ],

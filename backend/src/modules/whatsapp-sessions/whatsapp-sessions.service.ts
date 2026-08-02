@@ -275,26 +275,21 @@ export class WhatsappSessionsService {
     * Usado pelo PATCH /sessions/:id/settings. NÃO reconecta nem fecha a
     * sessão — o filtro roda no próximo MESSAGES_UPSERT.
     */
-   async updateSettings(
-     tenantId: string,
-     sessionId: string,
-     dto: {
-       contactFilterMode?: ContactFilterMode;
-       activeBotId?: string | null;
-       activeBotVersionId?: string | null;
-       autoReconnect?: boolean;
-       ignoreGroups?: boolean;
-       readMessages?: boolean;
-       typingIndicator?: boolean;
-       presenceUpdate?: boolean;
-       webhookUrl?: string;
-     },
-   ): Promise<{
-     id: string;
-     contactFilterMode: string;
-     activeBotId: string | null;
-     activeBotVersionId: string | null;
-   }> {
+    async updateSettings(
+      tenantId: string,
+      sessionId: string,
+      dto: {
+        contactFilterMode?: ContactFilterMode;
+        activeBotId?: string | null;
+        activeBotVersionId?: string | null;
+        webhookUrl?: string;
+      },
+    ): Promise<{
+      id: string;
+      contactFilterMode: string;
+      activeBotId: string | null;
+      activeBotVersionId: string | null;
+    }> {
      const session = await this.prisma.whatsappSession.findFirst({
        where: { id: sessionId, tenantId },
        select: { id: true, settings: { select: { id: true } } },
@@ -312,21 +307,16 @@ export class WhatsappSessionsService {
        nextActiveBotVersionId = null;
      }
 
-     const updated = await this.prisma.sessionSettings.upsert({
-       where: { sessionId: session.id },
-       update: {
-         ...(dto.contactFilterMode !== undefined ? { contactFilterMode: dto.contactFilterMode } : {}),
-         ...(nextActiveBotId !== undefined ? { activeBotId: nextActiveBotId } : {}),
-         ...(nextActiveBotVersionId !== undefined
-           ? { activeBotVersionId: nextActiveBotVersionId }
-           : {}),
-         ...(dto.autoReconnect !== undefined ? { autoReconnect: dto.autoReconnect } : {}),
-         ...(dto.ignoreGroups !== undefined ? { ignoreGroups: dto.ignoreGroups } : {}),
-         ...(dto.readMessages !== undefined ? { readMessages: dto.readMessages } : {}),
-         ...(dto.typingIndicator !== undefined ? { typingIndicator: dto.typingIndicator } : {}),
-         ...(dto.presenceUpdate !== undefined ? { presenceUpdate: dto.presenceUpdate } : {}),
-         ...(dto.webhookUrl !== undefined ? { webhookUrl: dto.webhookUrl } : {}),
-       },
+      const updated = await this.prisma.sessionSettings.upsert({
+        where: { sessionId: session.id },
+        update: {
+          ...(dto.contactFilterMode !== undefined ? { contactFilterMode: dto.contactFilterMode } : {}),
+          ...(nextActiveBotId !== undefined ? { activeBotId: nextActiveBotId } : {}),
+          ...(nextActiveBotVersionId !== undefined
+            ? { activeBotVersionId: nextActiveBotVersionId }
+            : {}),
+          ...(dto.webhookUrl !== undefined ? { webhookUrl: dto.webhookUrl } : {}),
+        },
        create: {
          sessionId: session.id,
          contactFilterMode: dto.contactFilterMode ?? 'none',
@@ -360,23 +350,18 @@ export class WhatsappSessionsService {
      });
      if (!session) throw new NotFoundException('Sessão não encontrada');
 
-     return this.prisma.sessionSettings.upsert({
-       where: { sessionId },
-       update: {},
-       create: { sessionId },
-       select: {
-         id: true,
-         contactFilterMode: true,
-         activeBotId: true,
-         activeBotVersionId: true,
-         autoReconnect: true,
-         ignoreGroups: true,
-         readMessages: true,
-         typingIndicator: true,
-         presenceUpdate: true,
-         webhookUrl: true,
-       },
-     }).then((s) => ({
+      return this.prisma.sessionSettings.upsert({
+        where: { sessionId },
+        update: {},
+        create: { sessionId },
+        select: {
+          id: true,
+          contactFilterMode: true,
+          activeBotId: true,
+          activeBotVersionId: true,
+          webhookUrl: true,
+        },
+      }).then((s) => ({
        ...s,
        // 🔒 S24-b — Normaliza modos legados ('blacklist' → 'none').
        contactFilterMode: normalizeContactFilterMode(s.contactFilterMode),
@@ -778,8 +763,6 @@ export class WhatsappSessionsService {
         settings: {
           select: {
             webhookUrl: true,
-            autoReconnect: true,
-            ignoreGroups: true,
             // 🔒 S24 — dados novos que a UI consome
             contactFilterMode: true,
             activeBotId: true,
