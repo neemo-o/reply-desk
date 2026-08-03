@@ -1,5 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { EvolutionService } from './evolution.service';
+import { EvolutionMessageParser } from './evolution-message-parser.service';
 
 /**
  * 🔌 Evolution API — módulo de integração.
@@ -15,7 +16,7 @@ import { EvolutionService } from './evolution.service';
  */
 @Global()
 @Module({
-  providers: [EvolutionService],
-  exports: [EvolutionService],
+  providers: [EvolutionService, EvolutionMessageParser],
+  exports: [EvolutionService, EvolutionMessageParser],
 })
 export class EvolutionModule {}

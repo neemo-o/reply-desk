@@ -367,6 +367,215 @@ export class EvolutionService {
     return this.call('POST', `/message/sendText/${encodeURIComponent(instanceName)}`, payload);
   }
 
+  // ─── Envio de tipos avançados (bot engine + broadcast) ───────────────
+  // Todos aceitam `number` (E.164 sem +) e devolvem { key, status }.
+
+  async sendImage(instanceName: string, input: {
+    number: string;
+    url: string;
+    caption?: string;
+    delayMs?: number;
+  }): Promise<{ key?: { id?: string }; status?: string }> {
+    return this.call('POST', `/message/sendMedia/${encodeURIComponent(instanceName)}`, {
+      number: input.number,
+      options: { delay: input.delayMs ?? 1200 },
+      mediaMessage: {
+        mediatype: 'image',
+        media: input.url,
+        ...(input.caption ? { caption: input.caption } : {}),
+      },
+    });
+  }
+
+  async sendVideo(instanceName: string, input: {
+    number: string;
+    url: string;
+    caption?: string;
+    delayMs?: number;
+  }): Promise<{ key?: { id?: string }; status?: string }> {
+    return this.call('POST', `/message/sendMedia/${encodeURIComponent(instanceName)}`, {
+      number: input.number,
+      options: { delay: input.delayMs ?? 1200 },
+      mediaMessage: {
+        mediatype: 'video',
+        media: input.url,
+        ...(input.caption ? { caption: input.caption } : {}),
+      },
+    });
+  }
+
+  async sendAudio(instanceName: string, input: {
+    number: string;
+    url: string;
+    delayMs?: number;
+  }): Promise<{ key?: { id?: string }; status?: string }> {
+    return this.call('POST', `/message/sendWhatsAppAudio/${encodeURIComponent(instanceName)}`, {
+      number: input.number,
+      options: { delay: input.delayMs ?? 1200 },
+      audio: { audio: input.url },
+    });
+  }
+
+  async sendDocument(instanceName: string, input: {
+    number: string;
+    url: string;
+    filename: string;
+    delayMs?: number;
+  }): Promise<{ key?: { id?: string }; status?: string }> {
+    return this.call('POST', `/message/sendMedia/${encodeURIComponent(instanceName)}`, {
+      number: input.number,
+      options: { delay: input.delayMs ?? 1200 },
+      mediaMessage: {
+        mediatype: 'document',
+        media: input.url,
+        fileName: input.filename,
+      },
+    });
+  }
+
+  async sendSticker(instanceName: string, input: {
+    number: string;
+    url: string;
+    delayMs?: number;
+  }): Promise<{ key?: { id?: string }; status?: string }> {
+    return this.call('POST', `/message/sendMedia/${encodeURIComponent(instanceName)}`, {
+      number: input.number,
+      options: { delay: input.delayMs ?? 1200 },
+      mediaMessage: { mediatype: 'sticker', media: input.url },
+    });
+  }
+
+  /**
+   * Lista interativa (WhatsApp). Somente 1 seção suportada (limite Evolution).
+   * Cada row precisa { id, title, description? }.
+   */
+  async sendList(instanceName: string, input: {
+    number: string;
+    title: string;
+    buttonText: string;
+    text: string;
+    sections: {
+      title: string;
+      rows: { id: string; title: string; description?: string }[];
+    }[];
+    delayMs?: number;
+  }): Promise<{ key?: { id?: string }; status?: string }> {
+    return this.call('POST', `/message/sendList/${encodeURIComponent(instanceName)}`, {
+      number: input.number,
+      options: { delay: input.delayMs ?? 1200 },
+      listMessage: {
+        title: input.title,
+        buttonText: input.buttonText,
+        descriptionText: input.text,
+        sectionsText: input.sections.map((s) => ({
+          title: s.title,
+          rows: s.rows.map((r) => ({
+            rowId: r.id,
+            title: r.title,
+            ...(r.description ? { description: r.description } : {}),
+          })),
+        })),
+      },
+    });
+  }
+
+  /**
+   * Botões interativos (até 3). Evolution API v2 usa endpoint sendButtons.
+   */
+  async sendButtons(instanceName: string, input: {
+    number: string;
+    text: string;
+    buttons: { id: string; title: string }[];
+    delayMs?: number;
+  }): Promise<{ key?: { id?: string }; status?: string }> {
+    if (input.buttons.length > 3) {
+      throw new BadGatewayException('WhatsApp aceita no máximo 3 botões');
+    }
+    return this.call('POST', `/message/sendButtons/${encodeURIComponent(instanceName)}`, {
+      number: input.number,
+      options: { delay: input.delayMs ?? 1200 },
+      buttonsMessage: {
+        title: input.text,
+        buttons: input.buttons.map((b, i) => ({
+          type: 'reply',
+          reply: { id: b.id, title: b.title },
+          index: i,
+        })),
+      },
+    });
+  }
+
+  async sendLocation(instanceName: string, input: {
+    number: string;
+    latitude: number;
+    longitude: number;
+    name?: string;
+    address?: string;
+    delayMs?: number;
+  }): Promise<{ key?: { id?: string }; status?: string }> {
+    return this.call('POST', `/message/sendLocation/${encodeURIComponent(instanceName)}`, {
+      number: input.number,
+      options: { delay: input.delayMs ?? 1200 },
+      locationMessage: {
+        latitude: input.latitude,
+        longitude: input.longitude,
+        degreesLatitude: input.latitude,
+        degreesLongitude: input.longitude,
+        ...(input.name ? { name: input.name } : {}),
+        ...(input.address ? { address: input.address } : {}),
+      },
+    });
+  }
+
+  async sendContact(instanceName: string, input: {
+    number: string;
+    contact: { name: string; phone: string };
+    delayMs?: number;
+  }): Promise<{ key?: { id?: string }; status?: string }> {
+    return this.call('POST', `/message/sendContact/${encodeURIComponent(instanceName)}`, {
+      number: input.number,
+      options: { delay: input.delayMs ?? 1200 },
+      contactMessage: {
+        contacts: [
+          {
+            fullName: input.contact.name,
+            phones: [{ number: input.contact.phone, type: 'mobile' }],
+          },
+        ],
+      },
+    });
+  }
+
+  async sendPoll(instanceName: string, input: {
+    number: string;
+    name: string;
+    options: string[];
+    selectableCount?: number;
+    delayMs?: number;
+  }): Promise<{ key?: { id?: string }; status?: string }> {
+    return this.call('POST', `/message/sendPoll/${encodeURIComponent(instanceName)}`, {
+      number: input.number,
+      options: { delay: input.delayMs ?? 1200 },
+      pollMessage: {
+        name: input.name,
+        values: input.options,
+        selectableCount: input.selectableCount ?? 1,
+      },
+    });
+  }
+
+  async sendReaction(instanceName: string, input: {
+    number: string;
+    emoji: string;
+    delayMs?: number;
+  }): Promise<{ key?: { id?: string }; status?: string }> {
+    return this.call('POST', `/message/sendReaction/${encodeURIComponent(instanceName)}`, {
+      number: input.number,
+      options: { delay: input.delayMs ?? 1200 },
+      reactionMessage: { reaction: input.emoji },
+    });
+  }
+
   // ─── Helpers ──────────────────────────────────────────────────────
 
   /**

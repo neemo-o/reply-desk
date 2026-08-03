@@ -3,8 +3,14 @@ import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { EvolutionService } from '../../common/evolution/evolution.service';
+import {
+  EvolutionMessageParser,
+} from '../../common/evolution/evolution-message-parser.service';
 import { WhatsappSessionsService } from '../whatsapp-sessions/whatsapp-sessions.service';
 import { ContactFilterService } from '../whatsapp-sessions/contact-filter.service';
+import { BotEngineService } from '../bots/engine/bot-engine.service';
+import { RealtimeService } from '../realtime/realtime.service';
+import { InstanceStatusService } from '../bots/instance-status.service';
 
 /**
  * 🔒 EvolutionWebhooksService — processa eventos de webhook recebidos da
@@ -39,6 +45,10 @@ export class EvolutionWebhooksService {
     private readonly config: ConfigService,
     private readonly sessionsService: WhatsappSessionsService,
     private readonly contactFilter: ContactFilterService,
+    private readonly botEngine: BotEngineService,
+    private readonly parser: EvolutionMessageParser,
+    private readonly realtime: RealtimeService,
+    private readonly instanceStatus: InstanceStatusService,
   ) {}
 
   /**
@@ -305,6 +315,18 @@ export class EvolutionWebhooksService {
         });
       }
     }
+
+    // 📡 Emite status consolidado via WebSocket (fire-and-forget).
+    void this.emitInstanceStatusForTenant(session.tenantId);
+  }
+
+  private async emitInstanceStatusForTenant(tenantId: string) {
+    try {
+      const status = await this.instanceStatus.getStatus(tenantId);
+      this.realtime.emitInstanceStatus(tenantId, status);
+    } catch (err) {
+      this.logger.debug(`emitInstanceStatus falhou: ${(err as Error).message}`);
+    }
   }
 
   /**
@@ -515,7 +537,46 @@ export class EvolutionWebhooksService {
 
     // 🤖 Resposta placeholder (apenas se RECENTE; nunca para reprocessamento)
     if (!messageWasCreated) return;
-    await this.maybeSendPlaceholder(session, phone, conversationId, text);
+    await this.dispatchBotEngine(session, phone, contactId, conversationId, d, externalId);
+  }
+
+  /**
+   * 🤖 Bot Engine — processa a mensagem recebida no motor de bots convencionais.
+   * Retorna semanticamente normalizada (text/list_response/buttons_response/etc)
+   * antes de invocar o BotEngineService. Não falha o webhook.
+   */
+  private async dispatchBotEngine(
+    session: { id: string; tenantId: string; sessionName: string; phone?: string | null; status: string },
+    phone: string,
+    contactId: string,
+    conversationId: string | null,
+    raw: Record<string, unknown>,
+    externalId: string | undefined,
+  ) {
+    // Evita incômodo: só disparamos o bot para sessões saudáveis (não connect/qr).
+    // A verificação mais fina de quem está em atendimento humano fica no engine.
+    void conversationId;
+    try {
+      const key = raw.key as Record<string, unknown> | undefined;
+      const messagePayload = raw.message as Record<string, unknown> | undefined;
+      if (!messagePayload) return;
+
+      const message = this.parser.parse(messagePayload, {
+        fromMe: Boolean(key?.fromMe),
+        remoteJid: key?.remoteJid as string | undefined,
+      });
+      await this.botEngine.processInbound({
+        whatsappSessionId: session.id,
+        tenantId: session.tenantId,
+        sessionName: session.sessionName,
+        contactId,
+        phone,
+        message,
+        externalId,
+      });
+    } catch (err) {
+      this.logger.debug(`dispatchBotEngine: ${(err as Error).message}`);
+    }
   }
 
   /**

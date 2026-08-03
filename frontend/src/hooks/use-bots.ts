@@ -1,21 +1,143 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { botsService } from "@/services/bots-service";
 import { useAuth } from "@/contexts/auth-provider";
+import { extractApiErrorMessage } from "@/lib/api-errors";
+import type {
+  CreateBotPayload,
+  CreateBotStepPayload,
+  CreateBotTriggerPayload,
+  TestBotPayload,
+  UpdateBotPayload,
+  UpdateBotStepPayload,
+} from "@/types/bots";
 
-/**
- * 🤖 useBots — lista bots do tenant atual.
- * Filtramos no cliente os publicados (status='active') — o backend já
- * aceita qualquer um no GET, mas o S24 só nos interessa os ativos.
- */
-export function useBots(options: { onlyActive?: boolean } = {}) {
+export function useBots() {
   const { isAuthenticated, tenant } = useAuth();
   return useQuery({
-    queryKey: ["bots", tenant?.id, options.onlyActive],
-    queryFn: async () => {
-      const all = await botsService.list();
-      return options.onlyActive ? all.filter((b) => b.status === "active") : all;
-    },
+    queryKey: ["bots", tenant?.id],
+    queryFn: botsService.list,
     enabled: isAuthenticated && Boolean(tenant),
     staleTime: 30_000,
+  });
+}
+
+export function useBot(id: string) {
+  const { isAuthenticated, tenant } = useAuth();
+  return useQuery({
+    queryKey: ["bots", tenant?.id, id],
+    queryFn: () => botsService.getOne(id),
+    enabled: isAuthenticated && Boolean(tenant) && Boolean(id),
+  });
+}
+
+export function useCreateBot() {
+  const queryClient = useQueryClient();
+  const { tenant } = useAuth();
+  return useMutation({
+    mutationFn: (payload: CreateBotPayload) => botsService.create(payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["bots", tenant?.id] });
+      toast.success("Bot criado com sucesso");
+    },
+    onError: (err) => {
+      toast.error(extractApiErrorMessage(err, "Não foi possível criar o bot."));
+    },
+  });
+}
+
+export function useUpdateBot() {
+  const queryClient = useQueryClient();
+  const { tenant } = useAuth();
+  return useMutation({
+    mutationFn: ({ id, ...payload }: { id: string } & UpdateBotPayload) => botsService.update(id, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["bots", tenant?.id] });
+    },
+    onError: (err) => {
+      toast.error(extractApiErrorMessage(err, "Não foi possível atualizar o bot."));
+    },
+  });
+}
+
+export function useDeleteBot() {
+  const queryClient = useQueryClient();
+  const { tenant } = useAuth();
+  return useMutation({
+    mutationFn: (id: string) => botsService.remove(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["bots", tenant?.id] });
+      toast.success("Bot removido.");
+    },
+    onError: (err) => {
+      toast.error(extractApiErrorMessage(err, "Não foi possível remover o bot."));
+    },
+  });
+}
+
+export function useCreateTrigger() {
+  const queryClient = useQueryClient();
+  const { tenant } = useAuth();
+  return useMutation({
+    mutationFn: ({ botId, payload }: { botId: string; payload: CreateBotTriggerPayload }) =>
+      botsService.createTrigger(botId, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["bots", tenant?.id] });
+    },
+    onError: (err) => {
+      toast.error(extractApiErrorMessage(err, "Não foi possível adicionar o gatilho."));
+    },
+  });
+}
+
+export function useCreateStep() {
+  const queryClient = useQueryClient();
+  const { tenant } = useAuth();
+  return useMutation({
+    mutationFn: ({ botId, payload }: { botId: string; payload: CreateBotStepPayload }) =>
+      botsService.createStep(botId, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["bots", tenant?.id] });
+    },
+    onError: (err) => {
+      toast.error(extractApiErrorMessage(err, "Não foi possível adicionar o step."));
+    },
+  });
+}
+
+export function useUpdateStep() {
+  const queryClient = useQueryClient();
+  const { tenant } = useAuth();
+  return useMutation({
+    mutationFn: ({ botId, stepId, payload }: { botId: string; stepId: string; payload: UpdateBotStepPayload }) =>
+      botsService.updateStep(botId, stepId, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["bots", tenant?.id] });
+    },
+    onError: (err) => {
+      toast.error(extractApiErrorMessage(err, "Não foi possível atualizar o step."));
+    },
+  });
+}
+
+export function useDeleteStep() {
+  const queryClient = useQueryClient();
+  const { tenant } = useAuth();
+  return useMutation({
+    mutationFn: ({ botId, stepId }: { botId: string; stepId: string }) =>
+      botsService.removeStep(botId, stepId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["bots", tenant?.id] });
+    },
+    onError: (err) => {
+      toast.error(extractApiErrorMessage(err, "Não foi possível remover o step."));
+    },
+  });
+}
+
+export function useTestBot() {
+  return useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: TestBotPayload }) =>
+      botsService.test(id, payload),
   });
 }

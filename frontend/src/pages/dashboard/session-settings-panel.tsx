@@ -111,7 +111,7 @@ function GeneralSettingsTab({
   settings: ReturnType<typeof useSessionSettings>;
 }) {
   const update = useUpdateSessionSettings(sessionId);
-  const { data: bots, isLoading: botsLoading } = useBots({ onlyActive: true });
+  const { data: bots, isLoading: botsLoading } = useBots();
 
   const s = settings.data;
   const [activeBotId, setActiveBotId] = useState<string>("");

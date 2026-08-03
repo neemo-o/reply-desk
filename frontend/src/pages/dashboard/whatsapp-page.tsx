@@ -1014,7 +1014,7 @@ function CreateSessionDialog({
   const [contactFilterMode, setContactFilterMode] =
     useState<ContactFilterMode>("none");
 
-  const { data: bots, isLoading: botsLoading } = useBots({ onlyActive: true });
+  const { data: bots, isLoading: botsLoading } = useBots();
 
   // Reseta o formulário quando o dialog fecha
   useEffect(() => {

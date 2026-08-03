@@ -23,9 +23,12 @@ import { SubscriptionsModule } from './modules/subscriptions/subscriptions.modul
 import { WhatsappSessionsModule } from './modules/whatsapp-sessions/whatsapp-sessions.module';
 import { BotsModule } from './modules/bots/bots.module';
 import { ContactsModule } from './modules/contacts/contacts.module';
+import { ContactListsModule } from './modules/contact-lists/contact-lists.module';
+import { BroadcastModule } from './modules/broadcast/broadcast.module';
 import { ConversationsModule } from './modules/conversations/conversations.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { HealthModule } from './modules/health/health.module';
+import { RealtimeModule } from './modules/realtime/realtime.module';
 
 /**
  * 📈 E1/E9 — AppModule: processo HTTP apenas.
@@ -62,9 +65,12 @@ import { HealthModule } from './modules/health/health.module';
     WhatsappSessionsModule,
     BotsModule,
     ContactsModule,
+    ContactListsModule,
+    BroadcastModule,
     ConversationsModule,
     WebhooksModule,
     HealthModule, // 📈 E4 — healthcheck
+    RealtimeModule, // 📡 WebSocket gateway
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

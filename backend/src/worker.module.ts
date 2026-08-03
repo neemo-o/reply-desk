@@ -11,6 +11,8 @@ import { QueueModule } from './modules/queue/queue.module';
 import { WhatsappSessionsModule } from './modules/whatsapp-sessions/whatsapp-sessions.module';
 import { ConversationsModule } from './modules/conversations/conversations.module';
 import { SubscriptionsModule } from './modules/subscriptions/subscriptions.module';
+import { BroadcastModule } from './modules/broadcast/broadcast.module';
+import { RealtimeModule } from './modules/realtime/realtime.module';
 
 /**
  * 📈 E1 — WorkerModule: contexto NestJS para o processo worker.
@@ -42,6 +44,8 @@ import { SubscriptionsModule } from './modules/subscriptions/subscriptions.modul
     SubscriptionsModule,   // resolve SubscriptionGuard → SubscriptionsService
     WhatsappSessionsModule, // contém WhatsappSessionsProcessor
     ConversationsModule,    // contém ConversationsService (para MessageProcessor)
+    BroadcastModule,        // contém BroadcastProcessor
+    RealtimeModule,         // RealtimeService (injetado pelo BroadcastProcessor)
   ],
 })
 export class WorkerModule {}

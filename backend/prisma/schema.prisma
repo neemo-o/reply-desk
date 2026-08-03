@@ -69,6 +69,10 @@ model Tenant {
   sessions       WhatsappSession[]
   sessionEvents  SessionEvent[]
   bots           Bot[]
+  botSessions    BotSession[]
+  contactLists   ContactList[]
+  broadcasts     BroadcastSchedule[]
+  messageLogs    MessageLog[]
   contacts       Contact[]
   conversations  Conversation[]
   files          FileAsset[]
@@ -345,11 +349,17 @@ model SessionContactListItem {
   @@map("session_contact_list_items")
 }
 
+// 🤖 Bots — tipos de bot:
+//   CONVENTIONAL — bot conversacional com steps/gatilhos, executado no inbound
+//   BROADCAST   — auto-mensagem (campanha agendada 1:1, não é chatbot).
 model Bot {
   id             String   @id @default(uuid())
   tenantId       String   @map("tenant_id")
   name           String
   description    String?
+  /// CONVENTIONAL | BROADCAST. Default CONVENTIONAL para bots pré-existentes.
+  type           String   @default("CONVENTIONAL")
+  /// draft | active | inactive. Mantemos 'draft'/'active' para compat com S24.
   status         String   @default("draft")
   defaultVersion Int?     @map("default_version")
   createdAt      DateTime @default(now()) @map("created_at")
@@ -358,9 +368,184 @@ model Bot {
   tenant          Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   versions        BotVersion[]
   sessionBindings SessionSettings[] // 🔒 S24 — sessões que apontam pra este bot como ativo
+  triggers        BotTrigger[]
+  steps           BotStep[]
+  sessions        BotSession[]
+  broadcasts      BroadcastSchedule[]
 
   @@index([tenantId, status]) // DB-1: bots ativos por tenant
+  @@index([tenantId, type])   // 🤖 listar por tipo
   @@map("bots")
+}
+
+/// 🤖 Gatilho que inicia o fluxo do bot convencional.
+/// tipo: 'keyword' (palavra-chave no texto) | 'first_message' (qualquer msg).
+/// valor: para 'keyword' = a palavra exata (case-insensitive); para
+///        'first_message' = null/ignored.
+model BotTrigger {
+  id        String   @id @default(uuid())
+  botId     String   @map("bot_id")
+  tipo      String   // keyword | first_message
+  valor     String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  bot Bot @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  @@index([botId])
+  @@map("bot_triggers")
+}
+
+/// 🤖 Passo do fluxo do bot convencional.
+/// conteúdo — JSON contendo payload da mensagem conforme o tipo:
+///   text   → { text: string }
+///   list   → { title, buttonText, sections: [{ title, rows: [{ id, title, description }] }] }
+///   buttons→ { text, buttons: [{ id, title }] }
+///   media  → { type: 'image'|'video'|'audio'|'document'|'sticker', url, caption? }
+/// nextConditions — JSON array de [{ match: string|number, stepOrder: number }]
+///   match comparado (case-insensitive) contra resposta do contato (texto/listId/buttonId).
+/// fallbackStepOrder — step a executar quando nenhuma condição casa (ou null = encerra).
+model BotStep {
+  id                 String  @id @default(uuid())
+  botId              String  @map("bot_id")
+  /// Ordem de execução dentro do fluxo. 1 = entrada.
+  ordem              Int
+  /// text | list | buttons | media
+  tipoMensagem       String  @map("tipo_mensagem")
+  conteudo           Json
+  /// JSON [{ match, stepOrder }] — condições de avanço.
+  condicoesProximo   Json?   @map("condicoes_proximo")
+  /// stepOrder a saltar se nenhuma condição casar. null = encerrar sessão.
+  fallbackStepOrder  Int?    @map("fallback_step_order")
+
+  bot      Bot          @relation(fields: [botId], references: [id], onDelete: Cascade)
+  sessions BotSession[]  @relation("BotSessionCurrentStep")
+
+  @@unique([botId, ordem])
+  @@index([botId])
+  @@map("bot_steps")
+}
+
+/// 🤖 Estado de um contato dentro do fluxo de um bot convencional.
+/// status — active | finished | routed.
+///   active:  dentro do fluxo (aguardando resposta p/ avaliar próximo step)
+///   finished:fluxo concluído (sem fallback / sem próximo step)
+///   routed:   redirecionado para atendimento humano (assignedUser set na conversa)
+model BotSession {
+  id           String    @id @default(uuid())
+  botId        String    @map("bot_id")
+  contactId    String    @map("contact_id")
+  tenantId     String    @map("tenant_id")
+  currentStepId String?  @map("current_step_id")
+  status       String    @default("active")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  bot         Bot       @relation(fields: [botId], references: [id], onDelete: Cascade)
+  contact     Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  currentStep BotStep?  @relation("BotSessionCurrentStep", fields: [currentStepId], references: [id], onDelete: SetNull)
+  messageLogs MessageLog[]
+
+  @@unique([botId, contactId]) // um contato só tem uma sessão ativa por bot.
+  @@index([tenantId, status])
+  @@index([contactId])
+  @@map("bot_sessions")
+}
+
+/// 🤖 Lista de contatos para broadcast (agrupamento tenant-scoped).
+/// Reaproveitamos tags via ContactTagRelation para inclusão opcional; aqui ficam
+/// as listas nomeadas (estático) usadas no agendamento.
+model ContactList {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  tenant      Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items       ContactListItem[]
+  broadcasts BroadcastSchedule[]
+
+  @@index([tenantId])
+  @@map("contact_lists")
+}
+
+/// 🤖 Item (contato) apontado para uma ContactList.
+model ContactListItem {
+  id           String  @id @default(uuid())
+  contactListId String @map("contact_list_id")
+  contactId     String @map("contact_id")
+
+  contactList ContactList @relation(fields: [contactListId], references: [id], onDelete: Cascade)
+  contact     Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([contactListId, contactId])
+  @@index([contactListId])
+  @@index([contactId])
+  @@map("contact_list_items")
+}
+
+/// 🤖 Agendamento de auto-mensagem (broadcast).
+/// mensagem — JSON contendo tipo + conteúdo (mesmos tipos de BotStep.conteudo).
+/// recurrence — ONCE | DAILY | WEEKLY.
+/// status    — scheduled | running | completed | paused.
+model BroadcastSchedule {
+  id              String    @id @default(uuid())
+  tenantId        String    @map("tenant_id")
+  botId           String    @map("bot_id")
+  contactListId   String    @map("contact_list_id")
+  mensagem        Json
+  startAt         DateTime  @map("start_at")
+  recurrence      String    @default("ONCE") // ONCE | DAILY | WEEKLY
+  status          String    @default("scheduled")
+  /// Contadores em tempo real (atualizados pelo processor):
+  totalContacts   Int       @default(0) @map("total_contacts")
+  sent           Int       @default(0)
+  pending        Int       @default(0)
+  failed         Int       @default(0)
+  lastRunAt      DateTime? @map("last_run_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  bot          Bot          @relation(fields: [botId], references: [id], onDelete: Cascade)
+  contactList  ContactList  @relation(fields: [contactListId], references: [id], onDelete: Restrict)
+  messageLogs  MessageLog[]
+
+  @@index([tenantId, status])
+  @@index([startAt])
+  @@map("broadcast_schedules")
+}
+
+/// 🤖 Log de toda mensagem trocada pelo motor de bots (convencional ou broadcast).
+/// direction — inbound | outbound.
+/// status    — pending | sent | delivered | failed | received (esta última p/ inbound).
+/// sessionId/ broadcastId — referência à origem (xor; só um é setado por linha).
+model MessageLog {
+  id           String   @id @default(uuid())
+  tenantId     String   @map("tenant_id")
+  botId        String?  @map("bot_id")
+  botSessionId String?  @map("bot_session_id")
+  broadcastId  String?  @map("broadcast_id")
+  contactId    String?  @map("contact_id")
+  direction    String
+  /// text | list | buttons | media | reaction | poll | location | contact.
+  type         String
+  content      Json?
+  status       String   @default("pending")
+  externalId   String?  @map("external_id")
+  error        String?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  botSession BotSession?       @relation(fields: [botSessionId], references: [id], onDelete: SetNull)
+  broadcast  BroadcastSchedule? @relation(fields: [broadcastId], references: [id], onDelete: SetNull)
+  tenant     Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contact    Contact?           @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, createdAt])
+  @@index([botSessionId])
+  @@index([broadcastId])
+  @@index([contactId])
+  @@map("message_logs")
 }
 
 model BotVersion {
@@ -456,6 +641,9 @@ model Contact {
   conversations Conversation[]
   tagRelations  ContactTagRelation[]
   listItems     SessionContactListItem[] // 🔒 S24 — em quais listas de sessão este contato aparece
+  botSessions   BotSession[]
+  contactListItems ContactListItem[]
+  messageLogs   MessageLog[]
 
   @@unique([tenantId, phone]) // lookup por phone dentro do tenant (upsert no webhook)
   @@index([phone]) // existente — mantido

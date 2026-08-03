@@ -85,4 +85,16 @@ export default () => ({
     ttl: parseInt(process.env.RATE_LIMIT_TTL ?? '60', 10),
     max: parseInt(process.env.RATE_LIMIT_MAX ?? '100', 10),
   },
+  /// 📣 Broadcast — controle de rate limit p/ campanhas de auto-mensagem.
+  broadcast: {
+    /// Limite de segurança de mensagens por hora. Listas maiores que este
+    /// limite são RECUSADAS no POST /broadcasts (regra negócio obrigatória).
+    maxMessagesPerHour: parseInt(
+      process.env.BROADCAST_MAX_MESSAGES_PER_HOUR ?? '5000',
+      10,
+    ),
+    /// Delay entre envios (segundos) — BullMQ usa no processor via sleep.
+    /// default 2s ≈ 1800 msgs/hora.
+    sendDelaySec: parseInt(process.env.BROADCAST_SEND_DELAY_SEC ?? '2', 10),
+  },
 });

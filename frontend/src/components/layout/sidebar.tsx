@@ -15,6 +15,7 @@ import {
   Settings,
   Users,
   Smartphone,
+  Bot,
 } from "lucide-react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Logo } from "@/components/layout/logo";
@@ -36,6 +37,7 @@ import { useTheme } from "@/contexts/theme-provider";
 import { useProfile } from "@/hooks/use-profile";
 import { useSessionExpiry } from "@/hooks/use-session-expiry";
 import { useWhatsappSessions } from "@/hooks/use-whatsapp";
+import { useInstanceStatus } from "@/hooks/use-instance-status";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
@@ -44,6 +46,10 @@ const NAV_ITEMS = [
 
 const ATTENDANCE_ITEMS = [
   { to: "/dashboard/whatsapp", label: "Sessões", icon: Smartphone, end: false },
+] as const;
+
+const AUTOMATION_ITEMS = [
+  { to: "/dashboard/bots", label: "Bots", icon: Bot, end: false },
 ] as const;
 
 const MANAGEMENT_ITEMS = [
@@ -242,6 +248,36 @@ function SidebarContent({ onNavigate }: SidebarContentProps) {
           );
         })}
 
+        {/* ---- Automação ---- */}
+        <div className="flex items-center gap-2 px-3 pt-6 pb-1">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/70 flex-1">
+            Automação
+          </p>
+          <InstanceStatusDot />
+        </div>
+        {AUTOMATION_ITEMS.map((item) => {
+          const Icon = item.icon;
+          return (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              onClick={onNavigate}
+              className={({ isActive }) =>
+                cn(
+                  "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+                  isActive
+                    ? "bg-secondary text-foreground"
+                    : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+                )
+              }
+            >
+              <Icon className="h-4.5 w-4.5 shrink-0" />
+              {item.label}
+            </NavLink>
+          );
+        })}
+
         {showManagement && (
           <>
             <p className="px-3 pt-6 pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground/70">
@@ -336,5 +372,25 @@ export function Sidebar() {
         <SidebarContent onNavigate={handleNavigate} />
       </aside>
     </>
+  );
+}
+
+function InstanceStatusDot() {
+  const { data } = useInstanceStatus();
+  const status = data?.status ?? "unknown";
+  const color =
+    status === "connected"
+      ? "bg-emerald-500"
+      : status === "disconnected"
+      ? "bg-red-500"
+      : status === "partial"
+      ? "bg-amber-500"
+      : "bg-muted-foreground/60";
+  return (
+    <span
+      title={`Instância: ${status}`}
+      className={`inline-block h-2 w-2 rounded-full ${color}`}
+      aria-hidden
+    />
   );
 }
