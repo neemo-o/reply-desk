@@ -35,7 +35,6 @@ export interface WhatsappSession {
     // 🔒 S24 — campos adicionados pela feature de configuração
     contactFilterMode?: ContactFilterMode;
     activeBotId?: string | null;
-    activeBotVersionId?: string | null;
   } | null;
 }
 
@@ -57,7 +56,6 @@ export interface CreateSessionPayload {
   name: string;
   // 🔒 S24 — config obrigatória na criação.
   activeBotId: string;
-  activeBotVersionId?: string;
   contactFilterMode?: ContactFilterMode;
 }
 
@@ -90,14 +88,12 @@ export interface SessionSettings {
   id: string;
   contactFilterMode: ContactFilterMode;
   activeBotId: string | null;
-  activeBotVersionId: string | null;
   webhookUrl: string | null;
 }
 
 export interface UpdateSessionSettingsPayload {
   contactFilterMode?: ContactFilterMode;
   activeBotId?: string | null;
-  activeBotVersionId?: string | null;
   webhookUrl?: string;
 }
 

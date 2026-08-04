@@ -1,45 +1,25 @@
-export interface BroadcastSchedule {
-  id: string;
-  tenantId: string;
-  botId: string;
-  contactListId: string;
-  mensagem: Record<string, unknown>;
-  startAt: string;
-  recurrence: "ONCE" | "DAILY" | "WEEKLY";
-  status: "scheduled" | "running" | "completed" | "paused";
-  totalContacts: number;
-  sent: number;
-  pending: number;
-  failed: number;
-  lastRunAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-  contactList?: {
-    id: string;
-    name: string;
-  };
-  bot?: {
-    id: string;
-    name: string;
-  };
-}
+/**
+ * Tipos de Broadcast — fonte canônica está em `@/types/bots`.
+ *
+ * Este arquivo reexporta os tipos compartilhados para manter o caminho
+ * `@/types/broadcast` usado por hooks/services já existentes, evitando
+ * duplicação entre `bots.ts` e `broadcast.ts`.
+ */
+export type {
+  BroadcastRecurrence,
+  BroadcastSchedule,
+  CreateBroadcastPayload,
+} from "@/types/bots";
+
+import type { BroadcastSchedule } from "@/types/bots";
 
 export interface BroadcastProgress {
   id: string;
-  status: string;
+  status: BroadcastSchedule["status"];
   totalContacts: number;
   sent: number;
   pending: number;
   failed: number;
   lastRunAt: string | null;
   updatedAt: string;
-}
-
-export interface CreateBroadcastPayload {
-  botId: string;
-  contactListId: string;
-  mensagem: Record<string, unknown>;
-  messageType: "text" | "list" | "buttons" | "media";
-  startAt: string;
-  recurrence?: "ONCE" | "DAILY" | "WEEKLY";
 }

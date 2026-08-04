@@ -1024,7 +1024,7 @@ function CreateSessionDialog({
     setContactFilterMode("none");
   }, [open]);
 
-  const noActiveBots = !botsLoading && (!bots || bots.length === 0);
+  const noActiveBots = !botsLoading && (!bots || bots.filter((b) => b.status === "active" || b.status === "testing").length === 0);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -1087,8 +1087,8 @@ function CreateSessionDialog({
               Dica: dê um nome que identifique o uso desta sessão (ex.: “Suporte”, “Vendas”).
             </p>
           </div>
-          {/* 🔒 S24 — Bot ativo obrigatório. Só lista bots publicados
-              (status='active'). Se não houver nenhum, orientamos o owner. */}
+          {/* 🔒 S24 — Bot ativo obrigatório. Só lista bots ativos
+              (status='active' | 'testing'). Se não houver nenhum, orientamos o owner. */}
           <div className="space-y-1.5">
             <Label htmlFor="session-bot">Bot ativo</Label>
             <select
@@ -1103,10 +1103,10 @@ function CreateSessionDialog({
                 {botsLoading
                   ? "Carregando bots…"
                   : noActiveBots
-                    ? "Nenhum bot publicado"
-                    : "Selecione um bot publicado"}
+                    ? "Nenhum bot ativo"
+                    : "Selecione um bot ativo"}
               </option>
-              {bots?.map((b) => (
+              {bots?.filter((b) => b.status === "active" || b.status === "testing").map((b) => (
                 <option key={b.id} value={b.id}>
                   {b.name}
                   {b.status === "testing" ? " (teste)" : ""}
@@ -1115,8 +1115,8 @@ function CreateSessionDialog({
             </select>
             {noActiveBots && (
               <p className="text-xs text-amber-600 dark:text-amber-400">
-                Publique um bot antes de criar a sessão. Acesse a página de Bots,
-                crie/edite e publique a versão.
+                Ative um bot antes de criar a sessão. Acesse a página de Bots,
+                crie/edite e altere o status para "ativo" (ou "testing").
               </p>
             )}
           </div>

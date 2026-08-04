@@ -14,6 +14,9 @@ import { MembersPage } from "@/pages/dashboard/members-page";
 import { WhatsappPage } from "@/pages/dashboard/whatsapp-page";
 import { BotsPage } from "@/pages/dashboard/bots-page";
 import { BotEditorPage } from "@/pages/dashboard/bot-editor-page";
+import { BroadcastEditorPage } from "@/pages/dashboard/broadcast-editor-page";
+import { ContactListsPage } from "@/pages/dashboard/contact-lists-page";
+import { ContactListDetailPage } from "@/pages/dashboard/contact-list-detail-page";
 import { NotFoundPage } from "@/pages/not-found-page";
 
 export default function App() {
@@ -33,11 +36,14 @@ export default function App() {
 
         <Route element={<SubscriptionGate />}>
           <Route path="/dashboard" element={<DashboardPage />} />
-<Route path="/dashboard/whatsapp" element={<WhatsappPage />} />
-            <Route path="/dashboard/bots" element={<BotsPage />} />
-            <Route path="/dashboard/bots/:id" element={<BotEditorPage />} />
-            <Route path="/dashboard/profile" element={<ProfilePage />} />
-            <Route path="/dashboard/members" element={<MembersPage />} />
+          <Route path="/dashboard/whatsapp" element={<WhatsappPage />} />
+          <Route path="/dashboard/bots" element={<BotsPage />} />
+          <Route path="/dashboard/bots/:id" element={<BotEditorPage />} />
+          <Route path="/dashboard/broadcasts/:id" element={<BroadcastEditorPage />} />
+          <Route path="/dashboard/contact-lists" element={<ContactListsPage />} />
+          <Route path="/dashboard/contact-lists/:id" element={<ContactListDetailPage />} />
+          <Route path="/dashboard/profile" element={<ProfilePage />} />
+          <Route path="/dashboard/members" element={<MembersPage />} />
         </Route>
       </Route>
 

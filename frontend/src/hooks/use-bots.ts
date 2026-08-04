@@ -10,6 +10,7 @@ import type {
   TestBotPayload,
   UpdateBotPayload,
   UpdateBotStepPayload,
+  UpdateBotTriggerPayload,
 } from "@/types/bots";
 
 export function useBots() {
@@ -51,7 +52,8 @@ export function useUpdateBot() {
   const { tenant } = useAuth();
   return useMutation({
     mutationFn: ({ id, ...payload }: { id: string } & UpdateBotPayload) => botsService.update(id, payload),
-    onSuccess: () => {
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["bots", tenant?.id, vars.id] });
       queryClient.invalidateQueries({ queryKey: ["bots", tenant?.id] });
     },
     onError: (err) => {
@@ -81,11 +83,52 @@ export function useCreateTrigger() {
   return useMutation({
     mutationFn: ({ botId, payload }: { botId: string; payload: CreateBotTriggerPayload }) =>
       botsService.createTrigger(botId, payload),
-    onSuccess: () => {
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["bots", tenant?.id, vars.botId] });
       queryClient.invalidateQueries({ queryKey: ["bots", tenant?.id] });
     },
     onError: (err) => {
       toast.error(extractApiErrorMessage(err, "Não foi possível adicionar o gatilho."));
+    },
+  });
+}
+
+export function useUpdateTrigger() {
+  const queryClient = useQueryClient();
+  const { tenant } = useAuth();
+  return useMutation({
+    mutationFn: ({
+      botId,
+      triggerId,
+      payload,
+    }: {
+      botId: string;
+      triggerId: string;
+      payload: UpdateBotTriggerPayload;
+    }) => botsService.updateTrigger(botId, triggerId, payload),
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["bots", tenant?.id, vars.botId] });
+      queryClient.invalidateQueries({ queryKey: ["bots", tenant?.id] });
+    },
+    onError: (err) => {
+      toast.error(extractApiErrorMessage(err, "Não foi possível atualizar o gatilho."));
+    },
+  });
+}
+
+export function useDeleteTrigger() {
+  const queryClient = useQueryClient();
+  const { tenant } = useAuth();
+  return useMutation({
+    mutationFn: ({ botId, triggerId }: { botId: string; triggerId: string }) =>
+      botsService.removeTrigger(botId, triggerId),
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["bots", tenant?.id, vars.botId] });
+      queryClient.invalidateQueries({ queryKey: ["bots", tenant?.id] });
+      toast.success("Gatilho removido.");
+    },
+    onError: (err) => {
+      toast.error(extractApiErrorMessage(err, "Não foi possível remover o gatilho."));
     },
   });
 }
@@ -96,7 +139,8 @@ export function useCreateStep() {
   return useMutation({
     mutationFn: ({ botId, payload }: { botId: string; payload: CreateBotStepPayload }) =>
       botsService.createStep(botId, payload),
-    onSuccess: () => {
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["bots", tenant?.id, vars.botId] });
       queryClient.invalidateQueries({ queryKey: ["bots", tenant?.id] });
     },
     onError: (err) => {
@@ -111,7 +155,8 @@ export function useUpdateStep() {
   return useMutation({
     mutationFn: ({ botId, stepId, payload }: { botId: string; stepId: string; payload: UpdateBotStepPayload }) =>
       botsService.updateStep(botId, stepId, payload),
-    onSuccess: () => {
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["bots", tenant?.id, vars.botId] });
       queryClient.invalidateQueries({ queryKey: ["bots", tenant?.id] });
     },
     onError: (err) => {
@@ -126,7 +171,8 @@ export function useDeleteStep() {
   return useMutation({
     mutationFn: ({ botId, stepId }: { botId: string; stepId: string }) =>
       botsService.removeStep(botId, stepId),
-    onSuccess: () => {
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["bots", tenant?.id, vars.botId] });
       queryClient.invalidateQueries({ queryKey: ["bots", tenant?.id] });
     },
     onError: (err) => {

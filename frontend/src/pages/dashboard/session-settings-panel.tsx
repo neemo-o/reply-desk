@@ -42,7 +42,7 @@ import {
  *
  * Exibido dentro do Sheet de detalhes da sessão (aba "Configurações").
  * Permite ao owner/admin:
- *  1. Trocar o bot ativo (ativos/publicados) ou desvincular.
+ *  1. Trocar o bot ativo (ativos) ou desvincular.
  *  2. Ligar/desligar a whitelist (modo "whitelist" ativa o filtro;
  *     "none" deixa só a blacklist valer como banimento).
  *  3. Gerenciar as listas whitelist e blacklist (adicionar por número,
@@ -140,7 +140,11 @@ function GeneralSettingsTab({
     );
   }
 
-  const noActiveBots = !botsLoading && (!bots || bots.length === 0);
+  const noActiveBots =
+    !botsLoading &&
+    (!bots ||
+      bots.filter((b) => b.status === "active" || b.status === "testing")
+        .length === 0);
   const hasChanges =
     activeBotId !== (s.activeBotId ?? "") || filterMode !== s.contactFilterMode;
 
@@ -153,37 +157,39 @@ function GeneralSettingsTab({
 
   return (
     <div className="space-y-5 pt-2">
-      {/* Bot ativo */}
-      <div className="space-y-1.5">
-        <Label htmlFor="settings-bot" className="flex items-center gap-1.5">
-          <Bot className="h-3.5 w-3.5" /> Bot ativo
-        </Label>
-        <select
-          id="settings-bot"
-          value={activeBotId}
-          onChange={(e) => setActiveBotId(e.target.value)}
-          disabled={noActiveBots}
-          className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <option value="">
-            {botsLoading
-              ? "Carregando bots…"
-              : noActiveBots
-                ? "Nenhum bot publicado"
-                : "Sem bot (sessão não responde)"}
-          </option>
-          {bots?.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.name}
-              {b.status === "testing" ? " (teste)" : ""}
+        {/* Bot ativo */}
+        <div className="space-y-1.5">
+          <Label htmlFor="settings-bot" className="flex items-center gap-1.5">
+            <Bot className="h-3.5 w-3.5" /> Bot ativo
+          </Label>
+          <select
+            id="settings-bot"
+            value={activeBotId}
+            onChange={(e) => setActiveBotId(e.target.value)}
+            disabled={noActiveBots}
+            className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <option value="">
+              {botsLoading
+                ? "Carregando bots…"
+                : noActiveBots
+                  ? "Nenhum bot ativo"
+                  : "Sem bot (sessão não responde)"}
             </option>
-          ))}
-        </select>
-        <p className="text-xs text-muted-foreground">
-          A sessão só gera QR e responde mensagens quando há um bot publicado vinculado.
-          Desvincule para pausar.
-        </p>
-      </div>
+            {bots
+              ?.filter((b) => b.status === "active" || b.status === "testing")
+              .map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                  {b.status === "testing" ? " (teste)" : ""}
+                </option>
+              ))}
+          </select>
+          <p className="text-xs text-muted-foreground">
+            A sessão só gera QR e responde mensagens quando há um bot ativo
+            vinculado. Desvincule para pausar.
+          </p>
+        </div>
 
       {/* Filtro de contatos */}
       <div className="space-y-1.5">

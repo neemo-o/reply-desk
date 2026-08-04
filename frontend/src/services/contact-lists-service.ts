@@ -1,6 +1,7 @@
 import { apiClient } from "./api-client";
 import type {
   ContactList,
+  ContactListDetail,
   CreateContactListPayload,
   AddContactsPayload,
 } from "@/types/contact-lists";
@@ -11,8 +12,8 @@ export const contactListsService = {
     return data;
   },
 
-  async getOne(id: string): Promise<ContactList & { items: { id: string; contact: { id: string; name: string | null; phone: string } }[] }> {
-    const { data } = await apiClient.get(`/contact-lists/${id}`);
+  async getOne(id: string): Promise<ContactListDetail> {
+    const { data } = await apiClient.get<ContactListDetail>(`/contact-lists/${id}`);
     return data;
   },
 

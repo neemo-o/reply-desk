@@ -3,7 +3,10 @@ import { toast } from "sonner";
 import { contactListsService } from "@/services/contact-lists-service";
 import { useAuth } from "@/contexts/auth-provider";
 import { extractApiErrorMessage } from "@/lib/api-errors";
-import type { AddContactsPayload, CreateContactListPayload } from "@/types/contact-lists";
+import type {
+  AddContactsPayload,
+  CreateContactListPayload,
+} from "@/types/contact-lists";
 
 export function useContactLists() {
   const { isAuthenticated, tenant } = useAuth();
@@ -44,8 +47,9 @@ export function useDeleteContactList() {
   const { tenant } = useAuth();
   return useMutation({
     mutationFn: (id: string) => contactListsService.remove(id),
-    onSuccess: () => {
+    onSuccess: (_, _id) => {
       queryClient.invalidateQueries({ queryKey: ["contact-lists", tenant?.id] });
+      toast.success("Lista removida.");
     },
     onError: (err) => {
       toast.error(extractApiErrorMessage(err, "Não foi possível remover a lista."));
@@ -59,11 +63,30 @@ export function useAddContactsToList() {
   return useMutation({
     mutationFn: ({ listId, payload }: { listId: string; payload: AddContactsPayload }) =>
       contactListsService.addContacts(listId, payload),
-    onSuccess: () => {
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["contact-lists", tenant?.id, vars.listId] });
       queryClient.invalidateQueries({ queryKey: ["contact-lists", tenant?.id] });
+      toast.success("Contatos adicionados à lista.");
     },
     onError: (err) => {
       toast.error(extractApiErrorMessage(err, "Não foi possível adicionar contatos."));
+    },
+  });
+}
+
+export function useRemoveContactFromList() {
+  const queryClient = useQueryClient();
+  const { tenant } = useAuth();
+  return useMutation({
+    mutationFn: ({ listId, contactId }: { listId: string; contactId: string }) =>
+      contactListsService.removeContact(listId, contactId),
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["contact-lists", tenant?.id, vars.listId] });
+      queryClient.invalidateQueries({ queryKey: ["contact-lists", tenant?.id] });
+      toast.success("Contato removido da lista.");
+    },
+    onError: (err) => {
+      toast.error(extractApiErrorMessage(err, "Não foi possível remover o contato."));
     },
   });
 }

@@ -64,7 +64,7 @@ export interface CreateBotPayload {
 
 export interface UpdateBotPayload {
   name?: string;
-  description?: string;
+  description?: string | null;
   type?: BotType;
   status?: BotStatus;
   testContactPhone?: string | null;
@@ -78,7 +78,7 @@ export interface CreateBotTriggerPayload {
 
 export interface UpdateBotTriggerPayload {
   tipo?: "keyword" | "first_message";
-  valor?: string;
+  valor?: string | null;
 }
 
 export interface CreateBotStepPayload {
@@ -93,8 +93,8 @@ export interface UpdateBotStepPayload {
   ordem?: number;
   tipoMensagem?: StepMessageType;
   conteudo?: Record<string, unknown>;
-  condicoesProximo?: BotStepCondition[];
-  fallbackStepOrder?: number;
+  condicoesProximo?: BotStepCondition[] | null;
+  fallbackStepOrder?: number | null;
 }
 
 export interface SandboxEvent {
