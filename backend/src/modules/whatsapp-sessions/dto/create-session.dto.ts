@@ -5,7 +5,6 @@ import {
   IsUUID,
   Length,
   Matches,
-  ValidateIf,
 } from 'class-validator';
 
 /**
@@ -58,17 +57,10 @@ export class CreateSessionDto {
   // número ele vai conectar — ele escolhe escaneando o QR.
 
   // 🔒 S24 — Bot ativo (obrigatório para a sessão ser conectável).
-  // Validamos no service que o bot existe no mesmo tenant, está com
-  // status='published' e que activeBotVersionId (se informado) pertence a
-  // esse bot. Se inválido → sessão criada em 'draft' (sem enfileirar
-  // connect-session na Evolution).
+  // Validamos no service que o bot existe no mesmo tenant e está publicado
+  // (status='active' ou 'testing'). Sem versões — o legado S24 foi removido.
   @IsUUID()
   activeBotId: string;
-
-  @IsOptional()
-  @ValidateIf((_o, v) => v !== undefined && v !== null)
-  @IsUUID()
-  activeBotVersionId?: string;
 
   // 🔒 S24 — Modo de filtragem de contatos. Default 'none' (comportamento
   // legado). O service cria SessionSettings junto com a sessão.

@@ -175,7 +175,7 @@ function GeneralSettingsTab({
           {bots?.map((b) => (
             <option key={b.id} value={b.id}>
               {b.name}
-              {b.versions?.[0] ? ` (v${b.versions[0].version})` : ""}
+              {b.status === "testing" ? " (teste)" : ""}
             </option>
           ))}
         </select>

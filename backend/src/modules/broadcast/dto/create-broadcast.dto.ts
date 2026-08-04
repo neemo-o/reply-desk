@@ -7,11 +7,11 @@ import {
   IsUUID,
 } from 'class-validator';
 
-export const RECURRENCES = ['ONCE', 'DAILY', 'WEEKLY'] as const;
+export const RECURRENCES = ['ONCE', 'DAILY', 'WEEKLY', 'MONTHLY'] as const;
 export const MESSAGE_TYPES = ['text', 'list', 'buttons', 'media'] as const;
 
 export class CreateBroadcastDto {
-  /// bot de tipo BROADCAST quedará owner do agendamento (accounting + lookup).
+  /// bot de tipo AUTO quedará owner do agendamento (accounting + lookup).
   @IsUUID()
   botId: string;
 

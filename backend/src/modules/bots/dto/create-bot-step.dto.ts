@@ -12,7 +12,13 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
-export const STEP_MESSAGE_TYPES = ['text', 'list', 'buttons', 'media'] as const;
+/// Tipos de mensagem suportados em um bot step.
+/// text|list|buttons|media — conteúdo normal enviado ao contato.
+/// handoff — transfere a conversa para atendimento humano (não envia mensagem
+///           ao contato via Evolution; apenas atualiza Conversation.assignedUser
+///           e marca BotSession como 'routed'). `conteudo.actionConfig` define
+///           queue/departamento opcional (reservado p/ roteamento futuro).
+export const STEP_MESSAGE_TYPES = ['text', 'list', 'buttons', 'media', 'handoff'] as const;
 
 export class StepConditionDto {
   @IsString()

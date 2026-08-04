@@ -40,8 +40,8 @@ model RefreshToken {
   // token façam refresh concorrentemente sem que uma revoke o token da outra.
   // Após o grace, o cleanup job remove; tentativa de uso após grace → 401.
   replacedAt DateTime? @map("replaced_at")
-  expiresAt   DateTime  @map("expires_at")
-  createdAt   DateTime  @default(now()) @map("created_at")
+  expiresAt  DateTime  @map("expires_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -53,15 +53,20 @@ model RefreshToken {
 }
 
 model Tenant {
-  id        String   @id @default(uuid())
-  name      String
-  slug      String   @unique
-  logo      String?
-  timezone  String   @default("America/Sao_Paulo")
-  language  String   @default("pt-BR")
-  status    String   @default("active")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id            String   @id @default(uuid())
+  name          String
+  slug          String   @unique
+  logo          String?
+  timezone      String   @default("America/Sao_Paulo")
+  language      String   @default("pt-BR")
+  status        String   @default("active")
+  /// Horário de atendimento da organização (UTC-agnostic; interpretado em `timezone`).
+  /// NULL = atendimento 24/7 (sem fora-de-horário). Format JSON:
+  /// { days: [{ dayOfWeek: 0-6, open: "HH:mm", close: "HH:mm" }], timezone?: string override }
+  /// dayOfWeek: 0 = domingo ... 6 = sábado.
+  businessHours Json?    @map("business_hours")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
 
   tenantUsers    TenantUser[]
   roles          Role[]
@@ -163,25 +168,25 @@ model Plan {
 }
 
 model Subscription {
-  id            String    @id @default(uuid())
-  tenantId      String    @map("tenant_id")
-  planId        String    @map("plan_id")
-  status        String    @default("trialing") // trialing | pending | active | past_due | cancelled
-  provider      String    @default("stripe")
-  externalId    String?   @unique @map("external_id") // Stripe subscription OU checkout session ID
-  lastPaymentId String?   @map("last_payment_id")
+  id                String    @id @default(uuid())
+  tenantId          String    @map("tenant_id")
+  planId            String    @map("plan_id")
+  status            String    @default("trialing") // trialing | pending | active | past_due | cancelled
+  provider          String    @default("stripe")
+  externalId        String?   @unique @map("external_id") // Stripe subscription OU checkout session ID
+  lastPaymentId     String?   @map("last_payment_id")
   // "recurring" = assinatura recorrente (cartão, cobra mensalmente)
   // "one_time"  = pagamento único (cartão ou Pix, 1 mês de acesso)
-  billingType  String    @default("recurring") @map("billing_type")
-  trialUntil    DateTime? @map("trial_until")
-  startsAt      DateTime  @default(now()) @map("starts_at")
-  expiresAt     DateTime? @map("expires_at")
+  billingType       String    @default("recurring") @map("billing_type")
+  trialUntil        DateTime? @map("trial_until")
+  startsAt          DateTime  @default(now()) @map("starts_at")
+  expiresAt         DateTime? @map("expires_at")
   // 🔒 Cancelamento no fim do ciclo (cancel_at_period_end do Stripe).
   // true = usuário pediu cancelar, mas mantém acesso até expiresAt.
   // Quando o webhook customer.subscription.deleted chega, vira false + status 'cancelled'.
-  cancelAtPeriodEnd Boolean @default(false) @map("cancel_at_period_end")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
+  cancelAtPeriodEnd Boolean   @default(false) @map("cancel_at_period_end")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   plan   Plan   @relation(fields: [planId], references: [id], onDelete: Restrict)
@@ -236,17 +241,17 @@ model WhatsappSession {
   /// sessão conecta (CONNECTION_UPDATE state=open) ou quando o
   /// usuário pede /connect ou /reconnect. Se atinge
   /// EVOLUTION_QR_MAX_ATTEMPTS (default 5), status vira 'qr_expired'.
-  qrAttempts          Int      @default(0) @map("qr_attempts")
+  qrAttempts          Int       @default(0) @map("qr_attempts")
   /// 🔒 S25 — Data do último QR gerado. Usada para debouncing de
   /// polling: se dois polls chegam dentro de EVOLUTION_QR_DEBOUNCE_MS
   /// (default 3000ms), servimos o QR anterior sem chamar a Evolution
   /// de novo. Isso evita spam de /instance/connect durante o polling.
-  qrLastGeneratedAt  DateTime? @map("qr_last_generated_at")
+  qrLastGeneratedAt   DateTime? @map("qr_last_generated_at")
   lastSeen            DateTime? @map("last_seen")
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @updatedAt @map("updated_at")
 
-  tenant        Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant        Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   settings      SessionSettings?
   conversations Conversation[]
   events        SessionEvent[]
@@ -263,20 +268,20 @@ model WhatsappSession {
 /// job de connect, logout manual) e é exibido na aba "Logs de conexão" da
 /// página de detalhes da sessão.
 model SessionEvent {
-  id        String   @id @default(uuid())
-  sessionId String   @map("session_id")
-  tenantId  String   @map("tenant_id")
+  id         String   @id @default(uuid())
+  sessionId  String   @map("session_id")
+  tenantId   String   @map("tenant_id")
   /// Tipo do evento: created | qrcode_pending | connected | disconnected | error | logout | deleted
-  type      String
+  type       String
   /// Código HTTP/WhatsApp de disconnect (401=conflict, 408=timeout, 440=gone).
-  statusCode Int?    @map("status_code")
+  statusCode Int?     @map("status_code")
   /// Número conectado no momento do evento (vindo do webhook Evolution).
-  phone     String?
+  phone      String?
   /// Mensagem legível para humanos (motivo do disconnect, etc.).
-  message   String?
+  message    String?
   /// Payload cru da Evolution para debug — guardamos só os campos relevantes.
-  metadata  Json?
-  createdAt DateTime @default(now()) @map("created_at")
+  metadata   Json?
+  createdAt  DateTime @default(now()) @map("created_at")
 
   session WhatsappSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   tenant  Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -291,7 +296,6 @@ model SessionSettings {
   id         String  @id @default(uuid())
   sessionId  String  @unique @map("session_id")
   webhookUrl String? @map("webhook_url")
-  
 
   // 🔒 S24 — Modo de filtragem de contatos via whitelist.
   // Valores: 'none' | 'whitelist'.
@@ -311,12 +315,10 @@ model SessionSettings {
   // 🔒 S24 — Bot ativo desta sessão. Obrigatório para a sessão ser
   // "conectável" (caso contrário status vira 'draft' e o QR fica
   // desabilitado na UI). SetNull pra não bloquear exclusão de bot.
-  activeBotId         String?  @map("active_bot_id")
-  activeBotVersionId  String?  @map("active_bot_version_id")
+  activeBotId String? @map("active_bot_id")
 
-  session         WhatsappSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  activeBot       Bot?            @relation(fields: [activeBotId], references: [id], onDelete: SetNull)
-  activeBotVersion BotVersion?    @relation(fields: [activeBotVersionId], references: [id], onDelete: SetNull)
+  session   WhatsappSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  activeBot Bot?            @relation(fields: [activeBotId], references: [id], onDelete: SetNull)
 
   @@map("session_settings")
 }
@@ -344,37 +346,48 @@ model SessionContactListItem {
   contact Contact         @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
   @@unique([sessionId, contactId, list]) // não duplicar (contato, lista) na sessão
-  @@index([sessionId])                   // S24: lookup "está na lista?" no inbound
-  @@index([sessionId, list])             // S24: listagem por lista na UI
+  @@index([sessionId]) // S24: lookup "está na lista?" no inbound
+  @@index([sessionId, list]) // S24: listagem por lista na UI
   @@map("session_contact_list_items")
 }
 
-// 🤖 Bots — tipos de bot:
-//   CONVENTIONAL — bot conversacional com steps/gatilhos, executado no inbound
-//   BROADCAST   — auto-mensagem (campanha agendada 1:1, não é chatbot).
+// 🤖 Bots — três tipos:
+//   SIMPLE   — Bot comum: envia UMA mensagem (boas-vindas) e encerra.
+//              Usa o Step de ordem 1 como mensagem única + offlineMessage.
+//   AGENTS   — Bot de agentes: fluxo multi-step com handoff humano final
+//              (step tipo HANDOFF transfere p/ atendimento humano).
+//   AUTO     — Bot de auto-mensagem: 1 disparo agendado (recorrente ou não)
+//              p/ uma ContactList. Não atende inbound — dispara via scheduler.
 model Bot {
-  id             String   @id @default(uuid())
-  tenantId       String   @map("tenant_id")
-  name           String
-  description    String?
-  /// CONVENTIONAL | BROADCAST. Default CONVENTIONAL para bots pré-existentes.
-  type           String   @default("CONVENTIONAL")
-  /// draft | active | inactive. Mantemos 'draft'/'active' para compat com S24.
-  status         String   @default("draft")
-  defaultVersion Int?     @map("default_version")
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+  id               String   @id @default(uuid())
+  tenantId         String   @map("tenant_id")
+  name             String
+  description      String?
+  /// SIMPLE | AGENTS | AUTO. Default AGENTS p/ bots pré-existentes (eram CONVENTIONAL).
+  type             String   @default("AGENTS")
+  /// draft | testing | active | inactive.
+  ///   draft    — em edição, não atende inbound nem dispara broadcasts.
+  ///   testing  — atende inbound / dispara APENAS p/ `testContactPhone`.
+  ///   active   — em produção, atende / dispara p/ todos os contatos.
+  ///   inactive — pausado manualmente.
+  status           String   @default("draft")
+  /// Quando status='testing', o bot só interage com este telefone (E.164).
+  testContactPhone String?  @map("test_contact_phone")
+  /// Mensagem enviada quando o contato mensagem fora do horário de atendimento
+  /// do tenant (Tenant.businessHours). NULL = não responde fora do horário.
+  offlineMessage   String?  @map("offline_message")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 
-  tenant          Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  versions        BotVersion[]
-  sessionBindings SessionSettings[] // 🔒 S24 — sessões que apontam pra este bot como ativo
+  tenant          Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sessionBindings SessionSettings[] // sessões que apontam pra este bot como ativo
   triggers        BotTrigger[]
   steps           BotStep[]
   sessions        BotSession[]
   broadcasts      BroadcastSchedule[]
 
   @@index([tenantId, status]) // DB-1: bots ativos por tenant
-  @@index([tenantId, type])   // 🤖 listar por tipo
+  @@index([tenantId, type]) // 🤖 listar por tipo
   @@map("bots")
 }
 
@@ -385,7 +398,7 @@ model Bot {
 model BotTrigger {
   id        String   @id @default(uuid())
   botId     String   @map("bot_id")
-  tipo      String   // keyword | first_message
+  tipo      String // keyword | first_message
   valor     String?
   createdAt DateTime @default(now()) @map("created_at")
 
@@ -405,20 +418,20 @@ model BotTrigger {
 ///   match comparado (case-insensitive) contra resposta do contato (texto/listId/buttonId).
 /// fallbackStepOrder — step a executar quando nenhuma condição casa (ou null = encerra).
 model BotStep {
-  id                 String  @id @default(uuid())
-  botId              String  @map("bot_id")
+  id                String @id @default(uuid())
+  botId             String @map("bot_id")
   /// Ordem de execução dentro do fluxo. 1 = entrada.
-  ordem              Int
+  ordem             Int
   /// text | list | buttons | media
-  tipoMensagem       String  @map("tipo_mensagem")
-  conteudo           Json
+  tipoMensagem      String @map("tipo_mensagem")
+  conteudo          Json
   /// JSON [{ match, stepOrder }] — condições de avanço.
-  condicoesProximo   Json?   @map("condicoes_proximo")
+  condicoesProximo  Json?  @map("condicoes_proximo")
   /// stepOrder a saltar se nenhuma condição casar. null = encerrar sessão.
-  fallbackStepOrder  Int?    @map("fallback_step_order")
+  fallbackStepOrder Int?   @map("fallback_step_order")
 
   bot      Bot          @relation(fields: [botId], references: [id], onDelete: Cascade)
-  sessions BotSession[]  @relation("BotSessionCurrentStep")
+  sessions BotSession[] @relation("BotSessionCurrentStep")
 
   @@unique([botId, ordem])
   @@index([botId])
@@ -431,19 +444,19 @@ model BotStep {
 ///   finished:fluxo concluído (sem fallback / sem próximo step)
 ///   routed:   redirecionado para atendimento humano (assignedUser set na conversa)
 model BotSession {
-  id           String    @id @default(uuid())
-  botId        String    @map("bot_id")
-  contactId    String    @map("contact_id")
-  tenantId     String    @map("tenant_id")
+  id            String   @id @default(uuid())
+  botId         String   @map("bot_id")
+  contactId     String   @map("contact_id")
+  tenantId      String   @map("tenant_id")
   currentStepId String?  @map("current_step_id")
-  status       String    @default("active")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
+  status        String   @default("active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
 
-  bot         Bot       @relation(fields: [botId], references: [id], onDelete: Cascade)
-  contact     Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  currentStep BotStep?  @relation("BotSessionCurrentStep", fields: [currentStepId], references: [id], onDelete: SetNull)
+  bot         Bot          @relation(fields: [botId], references: [id], onDelete: Cascade)
+  contact     Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  currentStep BotStep?     @relation("BotSessionCurrentStep", fields: [currentStepId], references: [id], onDelete: SetNull)
   messageLogs MessageLog[]
 
   @@unique([botId, contactId]) // um contato só tem uma sessão ativa por bot.
@@ -461,8 +474,8 @@ model ContactList {
   name      String
   createdAt DateTime @default(now()) @map("created_at")
 
-  tenant      Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  items       ContactListItem[]
+  tenant     Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items      ContactListItem[]
   broadcasts BroadcastSchedule[]
 
   @@index([tenantId])
@@ -471,7 +484,7 @@ model ContactList {
 
 /// 🤖 Item (contato) apontado para uma ContactList.
 model ContactListItem {
-  id           String  @id @default(uuid())
+  id            String @id @default(uuid())
   contactListId String @map("contact_list_id")
   contactId     String @map("contact_id")
 
@@ -484,32 +497,32 @@ model ContactListItem {
   @@map("contact_list_items")
 }
 
-/// 🤖 Agendamento de auto-mensagem (broadcast).
+/// 🤖 Agendamento de auto-mensagem (broadcast) — bot do tipo AUTO.
 /// mensagem — JSON contendo tipo + conteúdo (mesmos tipos de BotStep.conteudo).
-/// recurrence — ONCE | DAILY | WEEKLY.
+/// recurrence — ONCE | DAILY | WEEKLY | MONTHLY.
 /// status    — scheduled | running | completed | paused.
 model BroadcastSchedule {
-  id              String    @id @default(uuid())
-  tenantId        String    @map("tenant_id")
-  botId           String    @map("bot_id")
-  contactListId   String    @map("contact_list_id")
-  mensagem        Json
-  startAt         DateTime  @map("start_at")
-  recurrence      String    @default("ONCE") // ONCE | DAILY | WEEKLY
-  status          String    @default("scheduled")
+  id            String    @id @default(uuid())
+  tenantId      String    @map("tenant_id")
+  botId         String    @map("bot_id")
+  contactListId String    @map("contact_list_id")
+  mensagem      Json
+  startAt       DateTime  @map("start_at")
+  recurrence    String    @default("ONCE") // ONCE | DAILY | WEEKLY
+  status        String    @default("scheduled")
   /// Contadores em tempo real (atualizados pelo processor):
-  totalContacts   Int       @default(0) @map("total_contacts")
-  sent           Int       @default(0)
-  pending        Int       @default(0)
-  failed         Int       @default(0)
-  lastRunAt      DateTime? @map("last_run_at")
-  createdAt      DateTime  @default(now()) @map("created_at")
-  updatedAt      DateTime  @updatedAt @map("updated_at")
+  totalContacts Int       @default(0) @map("total_contacts")
+  sent          Int       @default(0)
+  pending       Int       @default(0)
+  failed        Int       @default(0)
+  lastRunAt     DateTime? @map("last_run_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
 
-  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  bot          Bot          @relation(fields: [botId], references: [id], onDelete: Cascade)
-  contactList  ContactList  @relation(fields: [contactListId], references: [id], onDelete: Restrict)
-  messageLogs  MessageLog[]
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  bot         Bot          @relation(fields: [botId], references: [id], onDelete: Cascade)
+  contactList ContactList  @relation(fields: [contactListId], references: [id], onDelete: Restrict)
+  messageLogs MessageLog[]
 
   @@index([tenantId, status])
   @@index([startAt])
@@ -536,7 +549,7 @@ model MessageLog {
   error        String?
   createdAt    DateTime @default(now()) @map("created_at")
 
-  botSession BotSession?       @relation(fields: [botSessionId], references: [id], onDelete: SetNull)
+  botSession BotSession?        @relation(fields: [botSessionId], references: [id], onDelete: SetNull)
   broadcast  BroadcastSchedule? @relation(fields: [broadcastId], references: [id], onDelete: SetNull)
   tenant     Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   contact    Contact?           @relation(fields: [contactId], references: [id], onDelete: SetNull)
@@ -546,48 +559,6 @@ model MessageLog {
   @@index([broadcastId])
   @@index([contactId])
   @@map("message_logs")
-}
-
-model BotVersion {
-  id          String  @id @default(uuid())
-  botId       String  @map("bot_id")
-  version     Int
-  description String?
-  published   Boolean @default(false)
-
-  bot       Bot           @relation(fields: [botId], references: [id], onDelete: Cascade)
-  rules     BotRule[]
-  variables BotVariable[]
-  sessionBindings SessionSettings[] // 🔒 S24 — sessões que apontam pra esta versão como ativa
-
-  @@unique([botId, version])
-  @@index([botId, published]) // DB-1: buscar versão publicada
-  @@map("bot_versions")
-}
-
-model BotRule {
-  id           String  @id @default(uuid())
-  botVersionId String  @map("bot_version_id")
-  priority     Int     @default(0)
-  trigger      String
-  responseType String  @map("response_type")
-  nextRule     String? @map("next_rule")
-
-  botVersion BotVersion @relation(fields: [botVersionId], references: [id], onDelete: Cascade)
-
-  @@map("bot_rules")
-}
-
-model BotVariable {
-  id           String  @id @default(uuid())
-  botVersionId String  @map("bot_version_id")
-  name         String
-  type         String
-  defaultValue String? @map("default_value")
-
-  botVersion BotVersion @relation(fields: [botVersionId], references: [id], onDelete: Cascade)
-
-  @@map("bot_variables")
 }
 
 model KnowledgeBase {
@@ -637,13 +608,13 @@ model Contact {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  tenant        Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  conversations Conversation[]
-  tagRelations  ContactTagRelation[]
-  listItems     SessionContactListItem[] // 🔒 S24 — em quais listas de sessão este contato aparece
-  botSessions   BotSession[]
+  tenant           Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversations    Conversation[]
+  tagRelations     ContactTagRelation[]
+  listItems        SessionContactListItem[] // 🔒 S24 — em quais listas de sessão este contato aparece
+  botSessions      BotSession[]
   contactListItems ContactListItem[]
-  messageLogs   MessageLog[]
+  messageLogs      MessageLog[]
 
   @@unique([tenantId, phone]) // lookup por phone dentro do tenant (upsert no webhook)
   @@index([phone]) // existente — mantido

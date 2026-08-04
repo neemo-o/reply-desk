@@ -46,8 +46,8 @@ export function BotEditorPage() {
           <ArrowLeft className="h-5 w-5" />
         </Button>
         <h1 className="text-2xl font-semibold tracking-tight">{bot.name}</h1>
-        <Badge variant={bot.type === "BROADCAST" ? "outline" : "secondary"}>
-          {bot.type === "CONVENTIONAL" ? "Convencional" : "Broadcast"}
+        <Badge variant={bot.type === "AUTO" ? "outline" : "secondary"}>
+          {bot.type === "SIMPLE" ? "Comum" : bot.type === "AGENTS" ? "Agentes" : "Auto-mensagem"}
         </Badge>
       </div>
 

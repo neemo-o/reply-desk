@@ -49,9 +49,9 @@ export class BroadcastsService {
   }
 
   /**
-   * Cria um agendamento de broadcast.
+   * Cria um agendamento de broadcast (bot do tipo AUTO).
    * Antes de persistir:
-   *   1. valida que o bot é BROADCAST e do tenant.
+   *   1. valida que o bot é AUTO e do tenant.
    *   2. valida content (validateStepContent).
    *   3. valida ContactList + conta contatos.
    *   4. valida limite: count × sendDelaySec → msgs/hora não pode exceder maxPerHour.
@@ -60,36 +60,62 @@ export class BroadcastsService {
   async create(tenantId: string, dto: CreateBroadcastDto) {
     if (!isUuid(dto.botId)) throw new NotFoundException('Bot não encontrado');
     const bot = await this.prisma.bot.findFirst({
-      where: { id: dto.botId, tenantId, type: 'BROADCAST' },
-      select: { id: true, status: true },
+      where: { id: dto.botId, tenantId, type: 'AUTO' },
+      select: { id: true, status: true, testContactPhone: true },
     });
-    if (!bot) throw new NotFoundException('Bot BROADCAST não encontrado');
+    if (!bot) throw new NotFoundException('Bot AUTO não encontrado');
+    if (bot.status === 'draft' || bot.status === 'inactive') {
+      throw new BadRequestException(
+        `Bot está ${bot.status} — ative-o (ou coloque em testing) antes de agendar.`,
+      );
+    }
 
     const contactList = await this.prisma.contactList.findFirst({
       where: { id: dto.contactListId, tenantId },
-      select: { id: true, _count: { select: { items: true } } },
+      select: { id: true, name: true, _count: { select: { items: true } } },
     });
     if (!contactList) throw new NotFoundException('Lista de contatos não encontrada');
 
     // valida conteúdo (sem alterar tipo do banco).
     const validated = validateStepContent(dto.messageType, dto.mensagem);
 
-    const totalContacts = contactList._count.items;
+    let totalContacts = contactList._count.items;
     if (totalContacts === 0) {
       throw new BadRequestException('Lista de contatos está vazia');
     }
 
-    /// Cálculo de limite: msgs por hora = (3600 / sendDelaySec).
-    /// Se count > maxPerHour → recusa.
+    // Em modo testing, disparamos apenas p/ o testContactPhone — totalContacts vira 1
+    // (ou 0 se o telefone não estiver na ContactList). Para o scheduler, isso é
+    // sinalizado via campo `pending` filtrado por telefone (ver processor).
+    const isTesting = bot.status === 'testing';
+    if (isTesting) {
+      const testPhone = bot.testContactPhone;
+      if (!testPhone) {
+        throw new BadRequestException(
+          'Bot em testing sem testContactPhone — defina um contato de teste.',
+        );
+      }
+      const testItem = await this.prisma.contactListItem.findFirst({
+        where: { contactListId: contactList.id, contact: { phone: testPhone } },
+        select: { id: true },
+      });
+      totalContacts = testItem ? 1 : 0;
+      if (totalContacts === 0) {
+        throw new BadRequestException(
+          `testContactPhone ${testPhone} não está na ContactList "${contactList.name}". ` +
+            `Adicione-o para poder testar o disparo.`,
+        );
+      }
+    }
+
     const msgsPerHour = Math.floor(3600 / this.sendDelaySec);
-    const estimatedHoursToFinish = totalContacts / msgsPerHour;
-    if (totalContacts > this.maxPerHour) {
+    void msgsPerHour;
+    if (!isTesting && totalContacts > this.maxPerHour) {
       throw new BadRequestException(
         `Lista (${totalContacts} contatos) ultrapassa o limite seguro de ${this.maxPerHour} mensagens/hora. ` +
         `Reduza a lista ou aumente o intervalo de envio.`,
       );
     }
-    void estimatedHoursToFinish;
 
     const startAt = new Date(dto.startAt);
     if (startAt.getTime() < Date.now()) {
@@ -115,7 +141,7 @@ export class BroadcastsService {
     const delay = Math.max(startAt.getTime() - Date.now(), 0);
     await this.broadcastQueue.add(
       'send-broadcast',
-      { broadcastId: broadcast.id, tenantId },
+      { broadcastId: broadcast.id, tenantId, isTesting },
       {
         jobId: `broadcast-${broadcast.id}-run`,
         delay,
@@ -185,6 +211,12 @@ export class BroadcastsService {
     if (b.status !== 'paused') {
       throw new BadRequestException('Apenas broadcasts pausados podem ser retomados');
     }
+    // Re-deriva isTesting pelo status do bot dono do agendamento.
+    const bot = await this.prisma.bot.findFirst({
+      where: { id: b.botId, tenantId },
+      select: { status: true },
+    });
+    const isTesting = bot?.status === 'testing';
     const updated = await this.prisma.broadcastSchedule.update({
       where: { id: b.id },
       data: { status: 'scheduled' },
@@ -192,7 +224,7 @@ export class BroadcastsService {
     if (b.pending > 0) {
       await this.broadcastQueue.add(
         'finish-broadcast',
-        { broadcastId: b.id, tenantId },
+        { broadcastId: b.id, tenantId, isTesting },
         { jobId: `broadcast-${b.id}-resume`, removeOnComplete: 200, removeOnFail: 200 },
       );
     }

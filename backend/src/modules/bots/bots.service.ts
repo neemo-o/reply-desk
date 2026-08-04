@@ -12,10 +12,24 @@ import { CreateBotTriggerDto } from './dto/create-bot-trigger.dto';
 import { UpdateBotTriggerDto } from './dto/update-bot-trigger.dto';
 import { CreateBotStepDto } from './dto/create-bot-step.dto';
 import { UpdateBotStepDto } from './dto/update-bot-step.dto';
-import { CreateBotRuleDto } from './dto/create-bot-rule.dto';
 import { validateStepContent } from './broadcast/step-content.validator';
 import { isUuid } from '../../common/utils/security';
 
+/**
+ * 🤖 BotsService — CRUD de bots (3 tipos: SIMPLE, AGENTS, AUTO).
+ *
+ * Cada tipo segue regras próprias:
+ *  - SIMPLE: tem UM step (ordem=1) tipo text/list/buttons/media — nunca handoff.
+ *            Não suporta múltiplos steps. Sem triggers (endeusado: sempre first_message).
+ *  - AGENTS: suporta N steps + triggers + step final tipo HANDOFF.
+ *  - AUTO:   NÃO tem steps nem triggers. Apenas é dono de BroadcastSchedule(s).
+ *
+ * Regras de status:
+ *  - draft    → em edição. BotEngine e scheduler ignoram.
+ *  - testing  → só interage com `testContactPhone` (campo em bots).
+ *  - active   → em produção.
+ *  - inactive → pausado manualmente.
+ */
 @Injectable()
 export class BotsService {
   constructor(
@@ -27,13 +41,19 @@ export class BotsService {
 
   async create(tenantId: string, dto: CreateBotDto) {
     await this.planLimits.assertCanCreateBot(tenantId);
-    return this.prisma.$transaction(async (tx) => {
-      const bot = await tx.bot.create({
-        data: { tenantId, name: dto.name, description: dto.description, type: dto.type },
-      });
-      // mantém compat com S24 (versão 1 publicada p/ BROADCAST também).
-      await tx.botVersion.create({ data: { botId: bot.id, version: 1 } });
-      return bot;
+    if (dto.testContactPhone && dto.type === 'AUTO') {
+      throw new BadRequestException('Bot AUTO não suporta testContactPhone');
+    }
+    return this.prisma.bot.create({
+      data: {
+        tenantId,
+        name: dto.name,
+        description: dto.description,
+        type: dto.type,
+        status: dto.testContactPhone && dto.type !== 'AUTO' ? 'testing' : 'draft',
+        testContactPhone: dto.testContactPhone ?? null,
+        offlineMessage: dto.offlineMessage ?? null,
+      },
     });
   }
 
@@ -47,15 +67,10 @@ export class BotsService {
         description: true,
         type: true,
         status: true,
-        defaultVersion: true,
+        testContactPhone: true,
+        offlineMessage: true,
         updatedAt: true,
         createdAt: true,
-        versions: {
-          where: { published: true },
-          orderBy: { version: 'desc' },
-          take: 1,
-          select: { id: true, version: true, published: true },
-        },
         triggers: { select: { id: true, tipo: true, valor: true } },
         _count: {
           select: {
@@ -72,13 +87,6 @@ export class BotsService {
     const bot = await this.prisma.bot.findFirst({
       where: { id, tenantId },
       include: {
-        versions: {
-          orderBy: { version: 'desc' },
-          include: {
-            rules: { orderBy: { priority: 'desc' } },
-            variables: true,
-          },
-        },
         triggers: { orderBy: { createdAt: 'asc' } },
         steps: { orderBy: { ordem: 'asc' } },
       },
@@ -89,9 +97,21 @@ export class BotsService {
 
   async update(tenantId: string, id: string, dto: UpdateBotDto) {
     const bot = await this.findOne(tenantId, id);
-    if (dto.status && !['draft', 'active', 'inactive'].includes(dto.status)) {
+    if (
+      dto.status &&
+      !['draft', 'testing', 'active', 'inactive'].includes(dto.status)
+    ) {
       throw new BadRequestException('status inválido');
     }
+    // AUTO não pode ter testContactPhone — defensive.
+    if (dto.testContactPhone && bot.type === 'AUTO') {
+      throw new BadRequestException('Bot AUTO não suporta testContactPhone');
+    }
+    // Para entrar em `testing` é obrigatório ter testContactPhone.
+    if (dto.status === 'testing' && !bot.testContactPhone && dto.testContactPhone === null) {
+      throw new BadRequestException('status=testing requer testContactPhone');
+    }
+
     return this.prisma.bot.update({
       where: { id: bot.id },
       data: {
@@ -99,6 +119,10 @@ export class BotsService {
         ...(dto.description !== undefined ? { description: dto.description } : {}),
         ...(dto.type !== undefined ? { type: dto.type } : {}),
         ...(dto.status !== undefined ? { status: dto.status } : {}),
+        ...(dto.testContactPhone !== undefined
+          ? { testContactPhone: dto.testContactPhone }
+          : {}),
+        ...(dto.offlineMessage !== undefined ? { offlineMessage: dto.offlineMessage } : {}),
       },
     });
   }
@@ -109,10 +133,10 @@ export class BotsService {
     return { success: true };
   }
 
-  // ─── Triggers ───────────────────────────────────────────────────────
+  // ─── Triggers (apenas AGENTS) ──────────────────────────────────────
 
   async createTrigger(tenantId: string, botId: string, dto: CreateBotTriggerDto) {
-    const bot = await this.assertConventionalBot(tenantId, botId);
+    const bot = await this.assertAgentsBot(tenantId, botId);
     if (dto.tipo === 'keyword' && (!dto.valor || dto.valor.trim().length === 0)) {
       throw new BadRequestException('valor obrigatório quando tipo=keyword');
     }
@@ -126,7 +150,7 @@ export class BotsService {
   }
 
   async updateTrigger(tenantId: string, botId: string, triggerId: string, dto: UpdateBotTriggerDto) {
-    await this.assertConventionalBot(tenantId, botId);
+    await this.assertAgentsBot(tenantId, botId);
     const trigger = await this.prisma.botTrigger.findFirst({
       where: { id: triggerId, botId },
     });
@@ -142,7 +166,7 @@ export class BotsService {
   }
 
   async removeTrigger(tenantId: string, botId: string, triggerId: string) {
-    await this.assertConventionalBot(tenantId, botId);
+    await this.assertAgentsBot(tenantId, botId);
     const trigger = await this.prisma.botTrigger.findFirst({
       where: { id: triggerId, botId },
       select: { id: true },
@@ -152,12 +176,30 @@ export class BotsService {
     return { success: true };
   }
 
-  // ─── Steps ──────────────────────────────────────────────────────────
+  // ─── Steps (SIMPLE: 1 único step ordem=1 | AGENTS: N steps) ────────
 
   async createStep(tenantId: string, botId: string, dto: CreateBotStepDto) {
-    const bot = await this.assertConventionalBot(tenantId, botId);
-    // valida conteúdo e devolve objeto tipado (mantém no DB como JSON canônico).
+    const bot = await this.assertBotForSteps(tenantId, botId);
     const validated = validateStepContent(dto.tipoMensagem, dto.conteudo);
+
+    // Regras específicas por tipo de bot:
+    if (bot.type === 'SIMPLE') {
+      if (dto.ordem !== 1) {
+        throw new BadRequestException('Bot SIMPLE aceita apenas um step com ordem=1');
+      }
+      if (dto.tipoMensagem === 'handoff') {
+        throw new BadRequestException('Bot SIMPLE não suporta step handoff');
+      }
+      // Garante que não há steps pré-existentes.
+      const existing = await this.prisma.botStep.findFirst({
+        where: { botId: bot.id },
+        select: { id: true },
+      });
+      if (existing) {
+        throw new BadRequestException('Bot SIMPLE aceita apenas um step');
+      }
+    }
+
     const existing = await this.prisma.botStep.findFirst({
       where: { botId: bot.id, ordem: dto.ordem },
       select: { id: true },
@@ -177,11 +219,21 @@ export class BotsService {
   }
 
   async updateStep(tenantId: string, botId: string, stepId: string, dto: UpdateBotStepDto) {
-    await this.assertConventionalBot(tenantId, botId);
+    const bot = await this.assertBotForSteps(tenantId, botId);
     const step = await this.prisma.botStep.findFirst({
       where: { id: stepId, botId },
     });
     if (!step) throw new NotFoundException('Step não encontrado');
+
+    // Bot SIMPLE não pode virar handoff nem mudar de ordem.
+    if (bot.type === 'SIMPLE') {
+      if (dto.tipoMensagem === 'handoff') {
+        throw new BadRequestException('Bot SIMPLE não suporta step handoff');
+      }
+      if (dto.ordem !== undefined && dto.ordem !== 1) {
+        throw new BadRequestException('Bot SIMPLE só permite step ordem=1');
+      }
+    }
 
     if (dto.ordem !== undefined) {
       const clash = await this.prisma.botStep.findFirst({
@@ -216,7 +268,7 @@ export class BotsService {
   }
 
   async removeStep(tenantId: string, botId: string, stepId: string) {
-    await this.assertConventionalBot(tenantId, botId);
+    await this.assertBotForSteps(tenantId, botId);
     const step = await this.prisma.botStep.findFirst({
       where: { id: stepId, botId },
       select: { id: true },
@@ -226,51 +278,33 @@ export class BotsService {
     return { success: true };
   }
 
-  // ─── Helpers ───────────────────────────────────────────────────────
+  // ─── Helpers ───────────────────────────────────────────────────
 
-  /** Bot convencional pertence ao tenant. Não permite actions em BROADCAST bots. */
-  async assertConventionalBot(tenantId: string, botId: string) {
+  /** Apenas bots AGENTS suportam triggers. */
+  async assertAgentsBot(tenantId: string, botId: string) {
     if (!isUuid(botId)) throw new NotFoundException('Bot não encontrado');
     const bot = await this.prisma.bot.findFirst({
       where: { id: botId, tenantId },
       select: { id: true, type: true },
     });
     if (!bot) throw new NotFoundException('Bot não encontrado');
-    if (bot.type !== 'CONVENTIONAL') {
-      throw new BadRequestException('Operação válida apenas para bots convencionais');
+    if (bot.type !== 'AGENTS') {
+      throw new BadRequestException('Operação válida apenas para bots AGENTS');
     }
     return bot;
   }
 
-  // ─── Compat S24: BotVersion/Rule legacy ──────────────────────────────
-
-  async addRule(tenantId: string, botId: string, versionNumber: number, dto: CreateBotRuleDto) {
-    await this.findOne(tenantId, botId);
-    const botVersion = await this.prisma.botVersion.findFirst({
-      where: { botId, version: versionNumber },
-      select: { id: true },
+  /** Bots SIMPLE (1 step) e AGENTS (N steps) suportam steps. AUTO não. */
+  async assertBotForSteps(tenantId: string, botId: string) {
+    if (!isUuid(botId)) throw new NotFoundException('Bot não encontrado');
+    const bot = await this.prisma.bot.findFirst({
+      where: { id: botId, tenantId },
+      select: { id: true, type: true },
     });
-    if (!botVersion) throw new NotFoundException('Versão do bot não encontrada');
-    return this.prisma.botRule.create({
-      data: { ...dto, botVersionId: botVersion.id },
-    });
-  }
-
-  async publish(tenantId: string, botId: string, versionNumber: number) {
-    await this.findOne(tenantId, botId);
-    return this.prisma.$transaction(async (tx) => {
-      await tx.botVersion.updateMany({
-        where: { botId, published: true },
-        data: { published: false },
-      });
-      await tx.botVersion.updateMany({
-        where: { botId, version: versionNumber },
-        data: { published: true },
-      });
-      return tx.bot.update({
-        where: { id: botId },
-        data: { status: 'active', defaultVersion: versionNumber },
-      });
-    });
+    if (!bot) throw new NotFoundException('Bot não encontrado');
+    if (bot.type === 'AUTO') {
+      throw new BadRequestException('Bots AUTO não suportam steps');
+    }
+    return bot;
   }
 }

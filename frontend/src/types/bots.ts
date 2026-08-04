@@ -1,11 +1,16 @@
-export type BotType = "CONVENTIONAL" | "BROADCAST";
-export type BotStatus = "draft" | "active" | "inactive";
+export type BotType = "SIMPLE" | "AGENTS" | "AUTO";
+export type BotStatus = "draft" | "testing" | "active" | "inactive";
 
-export interface BotVersion {
-  id: string;
-  version: number;
-  description?: string | null;
-  published: boolean;
+/// Configuração de horário de atendimento do tenant.
+/// businessHours null = 24/7.
+export interface BusinessHoursDay {
+  dayOfWeek: number; // 0=domingo..6=sábado
+  open: string; // "HH:mm"
+  close: string; // "HH:mm"
+}
+export interface BusinessHours {
+  days: BusinessHoursDay[];
+  timezone?: string;
 }
 
 export interface BotTrigger {
@@ -19,10 +24,12 @@ export interface BotStepCondition {
   stepOrder: number;
 }
 
+export type StepMessageType = "text" | "list" | "buttons" | "media" | "handoff";
+
 export interface BotStep {
   id: string;
   ordem: number;
-  tipoMensagem: "text" | "list" | "buttons" | "media";
+  tipoMensagem: StepMessageType;
   conteudo: Record<string, unknown>;
   condicoesProximo: BotStepCondition[] | null;
   fallbackStepOrder: number | null;
@@ -35,10 +42,10 @@ export interface Bot {
   description?: string | null;
   type: BotType;
   status: BotStatus;
-  defaultVersion?: number | null;
+  testContactPhone?: string | null;
+  offlineMessage?: string | null;
   createdAt: string;
   updatedAt?: string;
-  versions?: BotVersion[];
   triggers?: BotTrigger[];
   steps?: BotStep[];
   _count?: {
@@ -51,6 +58,8 @@ export interface CreateBotPayload {
   name: string;
   description?: string;
   type: BotType;
+  testContactPhone?: string;
+  offlineMessage?: string;
 }
 
 export interface UpdateBotPayload {
@@ -58,6 +67,8 @@ export interface UpdateBotPayload {
   description?: string;
   type?: BotType;
   status?: BotStatus;
+  testContactPhone?: string | null;
+  offlineMessage?: string | null;
 }
 
 export interface CreateBotTriggerPayload {
@@ -72,7 +83,7 @@ export interface UpdateBotTriggerPayload {
 
 export interface CreateBotStepPayload {
   ordem: number;
-  tipoMensagem: "text" | "list" | "buttons" | "media";
+  tipoMensagem: StepMessageType;
   conteudo: Record<string, unknown>;
   condicoesProximo?: BotStepCondition[];
   fallbackStepOrder?: number;
@@ -80,7 +91,7 @@ export interface CreateBotStepPayload {
 
 export interface UpdateBotStepPayload {
   ordem?: number;
-  tipoMensagem?: "text" | "list" | "buttons" | "media";
+  tipoMensagem?: StepMessageType;
   conteudo?: Record<string, unknown>;
   condicoesProximo?: BotStepCondition[];
   fallbackStepOrder?: number;
@@ -96,11 +107,49 @@ export interface SandboxEvent {
 
 export interface SandboxResult {
   events: SandboxEvent[];
-  finalStatus: "finished" | "waiting" | "error";
+  finalStatus: "finished" | "routed" | "waiting" | "error" | "offline";
   visitedSteps: number[];
 }
 
 export interface TestBotPayload {
   startMessage?: string;
   userMessages?: string[];
+}
+
+// Broadcasts (bot AUTO)
+export type BroadcastRecurrence = "ONCE" | "DAILY" | "WEEKLY" | "MONTHLY";
+
+export interface BroadcastSchedule {
+  id: string;
+  tenantId?: string;
+  botId: string;
+  contactListId: string;
+  mensagem: Record<string, unknown>;
+  startAt: string;
+  recurrence: BroadcastRecurrence;
+  status: "scheduled" | "running" | "completed" | "paused";
+  totalContacts: number;
+  sent: number;
+  pending: number;
+  failed: number;
+  lastRunAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateBroadcastPayload {
+  botId: string;
+  contactListId: string;
+  mensagem: Record<string, unknown>;
+  messageType: "text" | "list" | "buttons" | "media";
+  startAt: string;
+  recurrence?: BroadcastRecurrence;
+}
+
+export interface ContactList {
+  id: string;
+  tenantId?: string;
+  name: string;
+  createdAt: string;
+  _count?: { items: number };
 }

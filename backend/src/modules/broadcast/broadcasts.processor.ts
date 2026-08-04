@@ -49,12 +49,13 @@ export class BroadcastProcessor extends WorkerHost {
       parseInt(this.config.get<string>('broadcast.sendDelaySec') ?? '2', 10) * 1000;
   }
 
-  async process(job: Job<{ broadcastId: string; tenantId: string }>) {
+  async process(job: Job<{ broadcastId: string; tenantId: string; isTesting?: boolean }>) {
     const { broadcastId, tenantId } = job.data;
-    this.logger.log(`[job=${job.id}] Iniciando broadcast ${broadcastId} (tenant ${tenantId})`);
+    const isTesting = job.data.isTesting === true;
+    this.logger.log(`[job=${job.id}] Iniciando broadcast ${broadcastId} (tenant ${tenantId}${isTesting ? ', testing' : ''})`);
 
     try {
-      await this.runBroadcast(job, broadcastId);
+      await this.runBroadcast(job, broadcastId, isTesting);
       if (job.name === 'finish-broadcast' || job.name === 'send-broadcast') {
         await this.maybeReschedule(broadcastId);
       }
@@ -64,9 +65,10 @@ export class BroadcastProcessor extends WorkerHost {
     }
   }
 
-  private async runBroadcast(job: Job, broadcastId: string) {
+  private async runBroadcast(job: Job, broadcastId: string, isTesting = false) {
     const broadcast = await this.prisma.broadcastSchedule.findUnique({
       where: { id: broadcastId },
+      include: { bot: { select: { testContactPhone: true, name: true } } },
     });
     if (!broadcast) {
       this.logger.warn(`Broadcast ${broadcastId} não encontrado — abortando`);
@@ -77,6 +79,24 @@ export class BroadcastProcessor extends WorkerHost {
       return;
     }
 
+    // Em testing, validar que o testContactPhone está na ContactList. Se não
+    // estiver, marcamos erro e saímos (defensivo — service já valida, mas o
+    // contato pode ter sido removido entre create e run).
+    let testPhone: string | null = null;
+    if (isTesting) {
+      testPhone = broadcast.bot.testContactPhone ?? null;
+      if (!testPhone) {
+        this.logger.warn(
+          `Broadcast ${broadcastId} em testing sem testContactPhone — abortando`,
+        );
+        await this.prisma.broadcastSchedule.update({
+          where: { id: broadcastId },
+          data: { status: 'completed' },
+        });
+        return;
+      }
+    }
+
     // Marca como running (se scheduled).
     if (broadcast.status === 'scheduled') {
       await this.prisma.broadcastSchedule.update({
@@ -85,14 +105,14 @@ export class BroadcastProcessor extends WorkerHost {
       });
     }
 
-    // Identifica sessão WhatsApp ativa DA MESMA TENANT conectada — usamos
-    // a primeira com status='connected' para envio. Em MVP, broadcast 1:1.
+    // Identifica sessão WhatsApp ativa DA MESMA TENANT conectada. Em MVP,
+    // broadcast dispara pela primeira sessão connected do tenant (1:1).
     const session = await this.prisma.whatsappSession.findFirst({
       where: { tenantId: broadcast.tenantId, status: 'connected' },
       select: { sessionName: true },
     });
     if (!session) {
-      this.logger.warn(`Broadcast ${broadcastId}: nenhuma sessão conectada no tenant — marcando como failed`);
+      this.logger.warn(`Broadcast ${broadcastId}: nenhuma sessão conectada no tenant — marcando como paused`);
       await this.prisma.broadcastSchedule.update({
         where: { id: broadcastId },
         data: { status: 'paused' },
@@ -101,8 +121,6 @@ export class BroadcastProcessor extends WorkerHost {
     }
 
     // Busca contatos pendentes (ainda não enviados neste broadcast).
-    // Usamos MessageLog como source-of-truth: se existe log outbound p/ este
-    // (broadcastId, contactId), consideramos enviado.
     const sentLogs = await this.prisma.messageLog.findMany({
       where: { broadcastId, direction: 'outbound' },
       select: { contactId: true },
@@ -113,6 +131,10 @@ export class BroadcastProcessor extends WorkerHost {
       where: { contactListId: broadcast.contactListId },
       include: { contact: { select: { id: true, phone: true } } },
     });
+    // Em testing, mantém apenas o item cujo contato === testContactPhone.
+    const scopedItems = isTesting
+      ? items.filter((i) => i.contact.phone === testPhone)
+      : items;
 
     const conteudo = broadcast.mensagem as unknown as ValidatedStepContent & { type?: string };
     const tipo =
@@ -124,7 +146,7 @@ export class BroadcastProcessor extends WorkerHost {
 
     let totalSent = 0;
     let totalFailed = 0;
-    for (const item of items) {
+    for (const item of scopedItems) {
       // Rate limit: dorme entre mensagens.
       if (totalSent > 0 || totalFailed > 0) {
         await this.delay(this.sendDelayMs);
@@ -199,7 +221,9 @@ export class BroadcastProcessor extends WorkerHost {
 
     const next = new Date(broadcast.startAt);
     if (broadcast.recurrence === 'DAILY') next.setDate(next.getDate() + 1);
-    if (broadcast.recurrence === 'WEEKLY') next.setDate(next.getDate() + 7);
+    else if (broadcast.recurrence === 'WEEKLY') next.setDate(next.getDate() + 7);
+    else if (broadcast.recurrence === 'MONTHLY') next.setMonth(next.getMonth() + 1);
+    else return;
 
     const count = await this.prisma.contactListItem.count({
       where: { contactListId: broadcast.contactListId },

@@ -29,18 +29,21 @@ import { cn } from "@/lib/utils";
 import type { BotType, Bot as APIBot } from "@/types/bots";
 
 const TYPE_LABEL: Record<BotType, string> = {
-  CONVENTIONAL: "Convencional",
-  BROADCAST: "Auto-mensagem",
+  SIMPLE: "Comum",
+  AGENTS: "Agentes",
+  AUTO: "Auto-mensagem",
 };
 
 const STATUS_LABEL: Record<string, string> = {
   draft: "Rascunho",
+  testing: "Em teste",
   active: "Ativo",
   inactive: "Inativo",
 };
 
 const STATUS_DOT: Record<string, string> = {
   draft: "bg-muted-foreground/60",
+  testing: "bg-amber-500",
   active: "bg-emerald-500",
   inactive: "bg-muted-foreground/40",
 };
@@ -52,11 +55,14 @@ export function BotsPage() {
   const navigate = useNavigate();
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
-  const [type, setType] = useState<BotType>("CONVENTIONAL");
+  const [type, setType] = useState<BotType>("AGENTS");
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
-  const conventional = useMemo(() => bots?.filter((b) => b.type === "CONVENTIONAL") ?? [], [bots]);
-  const broadcast = useMemo(() => bots?.filter((b) => b.type === "BROADCAST") ?? [], [bots]);
+  const conversational = useMemo(
+    () => bots?.filter((b) => b.type === "SIMPLE" || b.type === "AGENTS") ?? [],
+    [bots],
+  );
+  const broadcast = useMemo(() => bots?.filter((b) => b.type === "AUTO") ?? [], [bots]);
 
   function handleCreate() {
     if (!name.trim()) return;
@@ -64,8 +70,8 @@ export function BotsPage() {
       onSuccess: (bot) => {
         setName("");
         setCreateOpen(false);
-        if (bot.type === "CONVENTIONAL") navigate(`/dashboard/bots/${bot.id}`);
-        else navigate(`/dashboard/broadcasts/${bot.id}`);
+        if (bot.type === "AUTO") navigate(`/dashboard/broadcasts/${bot.id}`);
+        else navigate(`/dashboard/bots/${bot.id}`);
       },
     });
   }
@@ -100,13 +106,13 @@ export function BotsPage() {
         </div>
       ) : (
         <>
-          {conventional.length > 0 && (
+          {conversational.length > 0 && (
             <>
               <h2 className="mb-3 mt-6 text-sm font-semibold uppercase text-muted-foreground/70">
                 Conversacionais
               </h2>
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {conventional.map((bot) => (
+                {conversational.map((bot) => (
                   <BotCard
                     key={bot.id}
                     bot={bot}
@@ -146,7 +152,7 @@ export function BotsPage() {
             <div>
               <Label>Tipo</Label>
               <select value={type} onChange={(e) => setType(e.target.value as BotType)} className="w-full rounded-md border bg-background px-3 py-2 text-sm">
-                <option value="CONVENTIONAL">Convencional (chatbot)</option>
+                <option value="AGENTS">Convencional (chatbot)</option>
                 <option value="BROADCAST">Auto-mensagem (broadcast)</option>
               </select>
             </div>
@@ -214,7 +220,7 @@ function BotCard({
               </div>
               {bot._count && (
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {bot.type === "CONVENTIONAL" ? `${bot._count.sessions} sessões ativas` : `${bot._count.broadcasts} campanhas`}
+                  {bot.type === "AGENTS" ? `${bot._count.sessions} sessões ativas` : `${bot._count.broadcasts} campanhas`}
                 </p>
               )}
             </div>

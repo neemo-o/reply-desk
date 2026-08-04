@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 
-export type StepMessageType = 'text' | 'list' | 'buttons' | 'media';
+export type StepMessageType = 'text' | 'list' | 'buttons' | 'media' | 'handoff';
 
 export interface StepContent {
   type: StepMessageType;
@@ -34,11 +34,34 @@ export interface MediaContent extends StepContent {
   caption?: string;
 }
 
+/**
+ * Step HANDOFF — transfere a conversa para atendimento humano.
+ * Não envia mensagem ao contato via Evolution. Em vez disso:
+ *  - atualiza `Conversation.assignedUser` (se `actionConfig.assignUserId`)
+ *  - marca `BotSession.status='routed'`
+ *  - opcionalmente envia `message` (texto de despedida/explicação) ao contato.
+ * `actionConfig` reservado p/ roteamento futuro (queue/departamento).
+ */
+export interface HandoffActionConfig {
+  assignUserId?: string;
+  queue?: string;
+  department?: string;
+}
+
+export interface HandoffContent extends StepContent {
+  type: 'handoff';
+  /// Texto opcional enviado ao contato ANTES do handoff (ex: "Vou te transferir...").
+  message?: string;
+  /// Configuração de roteamento (quem/queue/departamento assume).
+  actionConfig?: HandoffActionConfig;
+}
+
 export type ValidatedStepContent =
   | TextContent
   | ButtonsContent
   | ListContent
-  | MediaContent;
+  | MediaContent
+  | HandoffContent;
 
 export function validateStepContent(
   tipoMensagem: string,
@@ -86,12 +109,12 @@ export function validateStepContent(
       if (typeof s?.title !== 'string' || !Array.isArray(s?.rows) || s.rows.length === 0) {
         throw new BadRequestException('sections.*.title e rows são obrigatórios');
       }
+      if (s.rows.length > 10) {
+        throw new BadRequestException('Máximo de 10 linhas por seção');
+      }
       for (const r of s.rows) {
         if (typeof r?.id !== 'string' || typeof r?.title !== 'string') {
           throw new BadRequestException('rows.*.id e title são obrigatórios');
-        }
-        if (r.rows.length > 10) {
-          throw new BadRequestException('Máximo de 10 linhas por seção');
         }
       }
     }
@@ -123,6 +146,40 @@ export function validateStepContent(
       url: conteudo.url,
       ...(typeof conteudo.caption === 'string' ? { caption: conteudo.caption } : {}),
     } as MediaContent;
+  }
+
+  if (tipoMensagem === 'handoff') {
+    const message =
+      typeof conteudo.message === 'string' ? conteudo.message : undefined;
+    const actionConfig = (conteudo.actionConfig ?? undefined) as
+      | HandoffActionConfig
+      | undefined;
+    // Validação leve de actionConfig.
+    if (actionConfig) {
+      if (
+        actionConfig.assignUserId !== undefined &&
+        typeof actionConfig.assignUserId !== 'string'
+      ) {
+        throw new BadRequestException('actionConfig.assignUserId deve ser string');
+      }
+      if (
+        actionConfig.queue !== undefined &&
+        typeof actionConfig.queue !== 'string'
+      ) {
+        throw new BadRequestException('actionConfig.queue deve ser string');
+      }
+      if (
+        actionConfig.department !== undefined &&
+        typeof actionConfig.department !== 'string'
+      ) {
+        throw new BadRequestException('actionConfig.department deve ser string');
+      }
+    }
+    return {
+      type: 'handoff',
+      ...(message ? { message } : {}),
+      ...(actionConfig ? { actionConfig } : {}),
+    } as HandoffContent;
   }
 
   throw new BadRequestException(`tipoMensagem inválido: ${tipoMensagem}`);

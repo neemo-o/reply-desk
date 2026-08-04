@@ -4,11 +4,8 @@ import { ConfigService } from '@nestjs/config';
 
 export const SESSION_QUEUE = 'whatsapp-sessions';
 export const MESSAGE_QUEUE = 'messages';
-/// 🤖 Fila exclusiva do bot conversacional — respostas no inbound webhook.
-/// Concorrência alta para não atrasar atendimento humano.
-export const BOT_MESSAGE_QUEUE = 'bot-messages';
 /// 📣 Fila de broadcast — disparo em massa. Concorrência 1 + delay grande.
-/// Separada da fila do bot para garantir que disparo lento não atrase o bot.
+/// Separada da fila de mensagens para garantir que disparo lento não atrase o bot.
 export const BROADCAST_QUEUE = 'broadcast-messages';
 
 @Module({
@@ -26,7 +23,6 @@ export const BROADCAST_QUEUE = 'broadcast-messages';
     BullModule.registerQueue(
       { name: SESSION_QUEUE },
       { name: MESSAGE_QUEUE },
-      { name: BOT_MESSAGE_QUEUE },
       { name: BROADCAST_QUEUE },
     ),
   ],

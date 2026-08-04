@@ -6,7 +6,6 @@ import { CreateBotTriggerDto } from './dto/create-bot-trigger.dto';
 import { UpdateBotTriggerDto } from './dto/update-bot-trigger.dto';
 import { CreateBotStepDto } from './dto/create-bot-step.dto';
 import { UpdateBotStepDto } from './dto/update-bot-step.dto';
-import { CreateBotRuleDto } from './dto/create-bot-rule.dto';
 import { TestBotDto } from './dto/test-bot.dto';
 import { TenantGuard } from '../../common/guards/tenant.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -48,7 +47,7 @@ export class BotsController {
     return this.botsService.remove(tenantId, id);
   }
 
-  // ─── Triggers ───────────────────────────────────────────────────────
+  // ─── Triggers (apenas bots AGENTS) ───────────────────────────────
 
   @Post(':id/triggers')
   createTrigger(
@@ -78,7 +77,7 @@ export class BotsController {
     return this.botsService.removeTrigger(tenantId, id, triggerId);
   }
 
-  // ─── Steps ──────────────────────────────────────────────────────────
+  // ─── Steps (SIMPLE: 1 step | AGENTS: N steps) ────────────────────
 
   @Post(':id/steps')
   createStep(
@@ -108,28 +107,7 @@ export class BotsController {
     return this.botsService.removeStep(tenantId, id, stepId);
   }
 
-  // ─── Compat S24: rules + publish (legacy BotVersion) ────────────────
-
-  @Post(':id/versions/:version/rules')
-  addRule(
-    @CurrentTenant() tenantId: string,
-    @Param('id') id: string,
-    @Param('version') version: string,
-    @Body() dto: CreateBotRuleDto,
-  ) {
-    return this.botsService.addRule(tenantId, id, Number(version), dto);
-  }
-
-  @Patch(':id/versions/:version/publish')
-  publish(
-    @CurrentTenant() tenantId: string,
-    @Param('id') id: string,
-    @Param('version') version: string,
-  ) {
-    return this.botsService.publish(tenantId, id, Number(version));
-  }
-
-  // ─── Sandbox ( teste ) ─────────────────────────────────────────────
+  // ─── Sandbox ( simulação SIMPLE | AGENTS ) ──────────────────────
 
   @Post(':id/test')
   test(@CurrentTenant() tenantId: string, @Param('id') id: string, @Body() dto: TestBotDto) {
