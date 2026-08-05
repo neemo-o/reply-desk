@@ -3,6 +3,8 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  forwardRef,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
@@ -19,6 +21,7 @@ import {
   normalizeContactFilterMode,
   type ContactFilterMode,
 } from './dto/create-session.dto';
+import { RealtimeService } from '../realtime/realtime.service';
 
 /**
  * 🔒 WhatsappSessionsService — orquestra sessões de WhatsApp no banco.
@@ -94,6 +97,8 @@ export class WhatsappSessionsService {
     private readonly planLimits: PlanLimitsService,
     private readonly evolution: EvolutionService,
     config: ConfigService,
+    @Inject(forwardRef(() => RealtimeService))
+    private readonly realtime: RealtimeService,
   ) {
     this.qrMaxAttempts = Math.max(1, parseInt(config.get<string>('evolution.qrMaxAttempts') ?? '5', 10) || 5);
     this.qrDebounceMs = Math.max(500, parseInt(config.get<string>('evolution.qrDebounceMs') ?? '3000', 10) || 3000);
@@ -1473,7 +1478,47 @@ export class WhatsappSessionsService {
         ? `Sessão conectada com o número ${phone}${profileName ? ` (${profileName})` : ''}`
         : 'Sessão conectada',
     });
+
+    // 🔒 Bug 5 — Notifica frontend sobre a contagem de sessões ativas deste bot.
+    void this.emitBotSessionCount(
+      sessionId,
+      update.tenantId,
+    ).catch((err) =>
+      this.logger.debug(
+        `emitBotSessionCount (connected) falhou: ${(err as Error).message}`
+      )
+    );
+
     return update;
+  }
+
+  /**
+   * 🔒 Bug 5 — Recalcula e emite via WS quantas sessões ativas estão usando
+   * o bot vinculado aos `SessionSettings` de determinada `sessionId`.
+   * Fire-and-forget — não bloqueia o webhook de conexão.
+   */
+  private async emitBotSessionCount(
+    sessionId: string,
+    tenantId: string,
+  ): Promise<void> {
+    const settings = await this.prisma.sessionSettings.findUnique({
+      where: { sessionId },
+      select: { activeBotId: true },
+    });
+    if (!settings?.activeBotId) return;
+
+    const count = await this.prisma.whatsappSession.count({
+      where: {
+        tenantId,
+        status: 'connected',
+        settings: { activeBotId: settings.activeBotId },
+      },
+    });
+
+    this.realtime.emitBotSessionCount(tenantId, {
+      botId: settings.activeBotId,
+      activeSessions: count,
+    });
   }
 
   /**

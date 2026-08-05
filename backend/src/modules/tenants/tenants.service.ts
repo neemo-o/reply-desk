@@ -12,6 +12,10 @@ import { PlanLimitsService } from '../subscriptions/plan-limits.service';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { InviteUserDto } from './dto/invite-user.dto';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
+import {
+  UpdateTenantSettingsDto,
+  validateBusinessHoursDto,
+} from './dto/update-tenant-settings.dto';
 import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 
 const DEFAULT_ROLES = [
@@ -99,6 +103,10 @@ export class TenantsService {
         createdAt: true,
         timezone: true,
         language: true,
+        // 🔒 Bug 2 — necessário para o frontend montar o formulário de Settings.
+        businessHours: true,
+        offlineMessage: true,
+        welcomeMessage: true,
       },
     });
   }
@@ -146,6 +154,112 @@ export class TenantsService {
       }
       throw err;
     }
+  }
+
+  /**
+   * 🔒 Bug 2 — Atualiza configurações de atendimento do tenant:
+   * businessHours, offlineMessage, welcomeMessage. Também aceita
+   * name/timezone/language para upgrade unificado do form de Settings.
+   *
+   * Regras:
+   *  - businessHours=null remove o horário (atendimento 24/7).
+   *  - businessHours com days vazio é rejeitado (validação DTO).
+   *  - offlineMessage=null desativa a mensagem de fora de horário.
+   *  - welcomeMessage=null desativa a mensagem de boas-vindas.
+   *  - Se businessHours=null, offlineMessage nunca é enviada (sem janela
+   *    definida = sempre dentro do horário). O frontend deve avisar.
+   */
+  async updateSettings(tenantId: string, dto: UpdateTenantSettingsDto) {
+    const data: Record<string, unknown> = {};
+
+    if (dto.name !== undefined) {
+      const trimmed = dto.name.trim();
+      if (trimmed.length < 2) {
+        throw new BadRequestException('Nome deve ter ao menos 2 caracteres');
+      }
+      data.name = trimmed;
+    }
+    if (dto.logo !== undefined) data.logo = dto.logo;
+    if (dto.timezone !== undefined) data.timezone = dto.timezone;
+    if (dto.language !== undefined) data.language = dto.language;
+
+    if (dto.businessHours !== undefined) {
+      if (dto.businessHours === null) {
+        data.businessHours = null;
+      } else {
+        const errors = validateBusinessHoursDto(dto.businessHours);
+        if (errors.length > 0) {
+          throw new BadRequestException({
+            message: 'businessHours inválido',
+            violations: errors,
+          });
+        }
+        // Persiste como JSON. Se timezone não veio, removemos p/ cair no fallback
+        // do Tenant.timezone (sem override).
+        const bh: Record<string, unknown> = { days: dto.businessHours.days };
+        if (dto.businessHours.timezone) {
+          bh.timezone = dto.businessHours.timezone;
+        }
+        data.businessHours = bh;
+      }
+    }
+
+    if (dto.offlineMessage !== undefined) {
+      data.offlineMessage =
+        dto.offlineMessage === null || dto.offlineMessage.trim() === ''
+          ? null
+          : dto.offlineMessage.trim();
+    }
+    if (dto.welcomeMessage !== undefined) {
+      data.welcomeMessage =
+        dto.welcomeMessage === null || dto.welcomeMessage.trim() === ''
+          ? null
+          : dto.welcomeMessage.trim();
+    }
+
+    if (Object.keys(data).length === 0) {
+      throw new BadRequestException('Nenhum campo para atualizar');
+    }
+
+    return await this.prisma.tenant.update({
+      where: { id: tenantId },
+      data,
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        logo: true,
+        timezone: true,
+        language: true,
+        businessHours: true,
+        offlineMessage: true,
+        welcomeMessage: true,
+      },
+    });
+  }
+
+  /**
+   * 🔒 Bug 2 — Recupera as configurações completas do tenant (inclui
+   * businessHours, offlineMessage, welcomeMessage) para o frontend
+   * preencher o formulário de Settings.
+   */
+  async getSettings(tenantId: string) {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        logo: true,
+        timezone: true,
+        language: true,
+        businessHours: true,
+        offlineMessage: true,
+        welcomeMessage: true,
+      },
+    });
+    if (!tenant) throw new NotFoundException('Tenant não encontrado');
+    return tenant;
   }
 
   /**

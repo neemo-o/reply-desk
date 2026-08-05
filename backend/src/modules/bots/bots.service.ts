@@ -1,6 +1,9 @@
 import {
   BadRequestException,
+  forwardRef,
+  Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -14,6 +17,9 @@ import { CreateBotStepDto } from './dto/create-bot-step.dto';
 import { UpdateBotStepDto } from './dto/update-bot-step.dto';
 import { validateStepContent } from './broadcast/step-content.validator';
 import { isUuid } from '../../common/utils/security';
+import { WhatsappSessionsService } from '../whatsapp-sessions/whatsapp-sessions.service';
+import { InstanceStatusService } from './instance-status.service';
+import { RealtimeService } from '../realtime/realtime.service';
 
 /**
  * 🤖 BotsService — CRUD de bots (3 tipos: SIMPLE, AGENTS, AUTO).
@@ -32,15 +38,21 @@ import { isUuid } from '../../common/utils/security';
  */
 @Injectable()
 export class BotsService {
+  private readonly logger = new Logger(BotsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly planLimits: PlanLimitsService,
+    @Inject(forwardRef(() => WhatsappSessionsService))
+    private readonly sessionsService: WhatsappSessionsService,
+    private readonly instanceStatus: InstanceStatusService,
+    private readonly realtime: RealtimeService,
   ) {}
 
   // ─── Bots ────────────────────────────────────────────────────────────
 
   async create(tenantId: string, dto: CreateBotDto) {
-    await this.planLimits.assertCanCreateBot(tenantId);
+    await this.planLimits.assertCanCreateBot(tenantId, dto.type);
     if (dto.testContactPhone && dto.type === 'AUTO') {
       throw new BadRequestException('Bot AUTO não suporta testContactPhone');
     }
@@ -112,6 +124,29 @@ export class BotsService {
       throw new BadRequestException('status=testing requer testContactPhone');
     }
 
+    // 🔒 Bug 4 — Detecta mudança de status que desativa o bot (active/testing →
+    // draft/inactive). Quando isto acontece, sessões WhatsApp ativas
+    // conectadas a este bot devem ser desconectadas (logout Evolution) e o
+    // usuário notificado via WS com o motivo.
+    const nextStatus = dto.status ?? bot.status;
+    const wasActive = bot.status === 'active' || bot.status === 'testing';
+    const willBeInactive = nextStatus === 'draft' || nextStatus === 'inactive';
+    if (wasActive && willBeInactive) {
+      // Dispara em background — não bloqueia o update do bot (logout pode ser lento).
+      this.cascadeDisconnectSessions(bot.id, tenantId, bot.status, nextStatus).catch(
+        (err) =>
+          this.logger.error(
+            `cascadeDisconnectSessions(bot=${bot.id}) falhou: ${(err as Error).message}`,
+          ),
+      );
+    }
+
+    // 🔒 Bug 6 — Se está ativando o bot (draft/testing/inactive → active),
+    // verifica o limite de bots ativos do plano.
+    if (nextStatus === 'active' && bot.status !== 'active') {
+      await this.planLimits.assertCanActivateBot(tenantId, bot.id);
+    }
+
     return this.prisma.bot.update({
       where: { id: bot.id },
       data: {
@@ -127,8 +162,76 @@ export class BotsService {
     });
   }
 
+  /**
+   * 🔒 Bug 4 — Desconecta as sessões WhatsApp ativas que usam este bot como
+   * bot ativo nos `SessionSettings`. Registrado em `session_events` (logs de
+   * conexão) com mensagem legível explicando o motivo. WS emite instance.status
+   * para a UI mostrar banner alertando ao usuário.
+   *
+   * Chamado em background (fire-and-forget) — não bloqueia o update do bot.
+   */
+  private async cascadeDisconnectSessions(
+    botId: string,
+    tenantId: string,
+    previousStatus: string,
+    newStatus: string,
+  ): Promise<void> {
+    const sessions = await this.prisma.whatsappSession.findMany({
+      where: {
+        tenantId,
+        status: 'connected',
+        settings: { activeBotId: botId },
+      },
+      select: { id: true, name: true, tenantId: true },
+    });
+    if (sessions.length === 0) return;
+
+    const reason = `Bot inativado (status: ${previousStatus} → ${newStatus}). A sessão foi desconectada automaticamente.`;
+    this.logger.log(
+      `Bot ${botId} mudou de ${previousStatus} → ${newStatus}; desconectando ${sessions.length} sessão(ões) ativas`,
+    );
+
+    let disconnected = 0;
+    for (const session of sessions) {
+      try {
+        await this.sessionsService.logout(tenantId, session.id);
+        await this.sessionsService.logEvent(session.id, tenantId, 'disconnected', {
+          message: reason,
+        });
+        disconnected += 1;
+      } catch (err) {
+        this.logger.warn(
+          `cascadeDisconnect: falha ao desligar sessão ${session.id} (${session.name}): ${(err as Error).message}`,
+        );
+      }
+    }
+
+    // 🔒 Bug 4 — Notifica o frontend via WS para mostrar a mudança de status
+    // imediatamente (banner "Sessão desconectada: bot foi inativado").
+    if (disconnected > 0) {
+      try {
+        const status = await this.instanceStatus.getStatus(tenantId);
+        this.realtime.emitInstanceStatus(tenantId, status);
+      } catch (err) {
+        this.logger.debug(
+          `cascadeDisconnect: emitInstanceStatus falhou: ${(err as Error).message}`,
+        );
+      }
+    }
+  }
+
   async remove(tenantId: string, id: string) {
     const bot = await this.findOne(tenantId, id);
+    // 🔒 Bug 4 — Desconecta sessões ativas que usavam este bot. Como o bot
+    // será deletado (cascade de SessionSettings.activeBotId=SetNull), o
+    // SessionSettings.activeBotId vira null e a sessão fica "sem bot".
+    // Desconectamos antes para avisar o usuário com motivo claro.
+    this.cascadeDisconnectSessions(bot.id, tenantId, bot.status, 'deleted').catch(
+      (err) =>
+        this.logger.error(
+          `cascadeDisconnectSessions(bot=${bot.id}, delete) falhou: ${(err as Error).message}`,
+        ),
+    );
     await this.prisma.bot.delete({ where: { id: bot.id } });
     return { success: true };
   }

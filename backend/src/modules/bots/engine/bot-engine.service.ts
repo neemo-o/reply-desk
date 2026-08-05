@@ -117,6 +117,15 @@ export class BotEngineService {
         status: true,
         testContactPhone: true,
         offlineMessage: true,
+        tenant: {
+          select: {
+            id: true,
+            timezone: true,
+            businessHours: true,
+            offlineMessage: true,
+            welcomeMessage: true,
+          },
+        },
       },
     });
     if (!bot) return null;
@@ -174,7 +183,7 @@ export class BotEngineService {
       }
     }
 
-    // 5. Fora de horário — se offlineMessage definido e contato fora do
+    // 5. Fora de horário — se offlineMessage (tenant) definido e contato fora do
     //    horário, envia mensagem única e aborta o fluxo.
     const offlineSent = await this.handleBusinessHours(tx, bot, ctx);
     if (offlineSent) {
@@ -189,7 +198,16 @@ export class BotEngineService {
 
     // 7. SIMPLE: só step 1, sem condições/triggers multi-step.
     if (bot.type === 'SIMPLE') {
-      return this.handleSimpleInbound(tx, bot, ctx, session);
+      // 🔒 Bug 3 — Cooldown: precisa também da última sessão não-active
+      // (finished/cooldown/routed) para checar se pode re-enviar.
+      const anySession = session
+        ? session
+        : await tx.botSession.findFirst({
+            where: { botId: bot.id, contactId: ctx.contactId },
+            orderBy: { updatedAt: 'desc' },
+            select: { id: true, status: true, lastSentAt: true },
+          });
+      return this.handleSimpleInbound(tx, bot, ctx, anySession);
     }
 
     // 8. AGENTS: igual ao fluxo histórico.
@@ -211,9 +229,13 @@ export class BotEngineService {
           tenantId: ctx.tenantId,
           currentStepId: firstStep.id,
           status: 'active',
+          lastSentAt: new Date(),
         },
         include: { currentStep: true },
       });
+      // 🔒 Bug 2 — Envia welcomeMessage do tenant (se definida) ANTES do step 1.
+      // Justamente quando a conversa está sendo iniciada (não quando retoma).
+      await this.maybeSendWelcome(tx, bot, ctx);
       await this.executeStep(tx, session, ctx);
       return this.toSessionSummary(session, bot.id);
     }
@@ -230,24 +252,121 @@ export class BotEngineService {
   }
 
   /**
+   * 🔒 Bug 2 — Envia a mensagem de boas-vindas do tenant (se configurada)
+   * quando uma NOVA conversa é iniciada. Não-interrompe o fluxo — se falhar,
+   * segue o step 1 normalmente. Persistida em MessageLog para a UI mostrar.
+   */
+  private async maybeSendWelcome(
+    tx: Prisma.TransactionClient,
+    bot: { id: string; tenant?: { welcomeMessage: string | null } | null },
+    ctx: BotInboundContext,
+  ): Promise<void> {
+    const welcome = bot.tenant?.welcomeMessage;
+    if (!welcome) return;
+    try {
+      await this.evolution.sendText(ctx.sessionName, {
+        number: ctx.phone,
+        text: welcome,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `falha ao enviar welcomeMessage p/ ${ctx.phone}: ${(err as Error).message}`,
+      );
+    }
+    await tx.messageLog.create({
+      data: {
+        tenantId: ctx.tenantId,
+        botId: bot.id,
+        contactId: ctx.contactId,
+        direction: 'outbound',
+        type: 'text',
+        content: { type: 'text', text: welcome } as unknown as Prisma.InputJsonValue,
+        status: 'pending',
+      },
+    });
+  }
+
+  /**
    * Bot SIMPLE: o contato envia qualquer mensagem → respondemos com step ordem=1
    * (uma única vez por contato). Sessão nasce/termina em 'finished'.
+   *
+   * 🔒 Bug 3 — Cooldown de 12h: se já existe sessão finished para este
+   * (bot, contato), só reenvia o step 1 se já passaram ≥12h desde o último
+   * envio (lastSentAt). Caso contrário, ignora a mensagem (return null-like).
    */
   private async handleSimpleInbound(
     tx: Prisma.TransactionClient,
     bot: { id: string; name: string; testContactPhone: string | null; status: string },
     ctx: BotInboundContext,
-    existing: { id: string; status: string } | null,
+    existing: { id: string; status: string; lastSentAt?: Date | null } | null,
   ): Promise<{ id: string; botId: string; status: string; currentStep: { ordem: number } | null } | null> {
-    // Se já existe sessão (qualquer status), não reenvia a mensagem.
+    const COOLDOWN_MS = 12 * 60 * 60 * 1000; // 12 horas
+
+    // 🔒 Bug 3 — Se já existe sessão (active/finished/cooldown/routed),
+    // respeita o cooldown._sessões não-active significam que o fluxo já
+    // rodou (active=em fluxo, finished=concluído, routed=handoff, cooldown=idle).
     if (existing) {
-      return {
-        id: existing.id,
-        botId: bot.id,
-        status: existing.status,
-        currentStep: null,
-      };
+      const lastSent = existing.lastSentAt ? new Date(existing.lastSentAt).getTime() : null;
+      const now = Date.now();
+      const inCooldown = lastSent !== null && now - lastSent < COOLDOWN_MS;
+
+      if (existing.status === 'active') {
+        // Sessão em fluxo (não deveria acontecer em SIMPLE, mas segurança):
+        // não re-envia, mantém ativa — o usuário deve responder ao step atual.
+        return {
+          id: existing.id,
+          botId: bot.id,
+          status: existing.status,
+          currentStep: null,
+        };
+      }
+
+      // finished/routed/cooldown — só re-envia se cooldown esgotou.
+      if (inCooldown) {
+        this.logger.log(
+          `bot SIMPLE ${bot.id} em cooldown p/ contato ${ctx.contactId} ` +
+          `(último envio=${lastSent ? new Date(lastSent).toISOString() : '-'}, faltam ${
+            Math.ceil((COOLDOWN_MS - (now - (lastSent ?? 0))) / 60000)
+          } min) — não reenvia`,
+        );
+        // Marca status cooldown para diagnóstico (transição válida: finished → cooldown).
+        await tx.botSession.update({
+          where: { id: existing.id },
+          data: { status: 'cooldown' },
+        });
+        return {
+          id: existing.id,
+          botId: bot.id,
+          status: 'cooldown',
+          currentStep: null,
+        };
+      }
+
+      // Cooldown esgotado — RE-ENVIA o step 1 (cria nova sessão? não: reusa
+      // a existente, setando status finished e lastSentAt=now).
+      const step = await tx.botStep.findFirst({
+        where: { botId: bot.id, ordem: 1 },
+        orderBy: { ordem: 'asc' },
+      });
+      if (!step) {
+        this.logger.warn(`bot SIMPLE ${bot.id} sem step ordem=1`);
+        return null;
+      }
+      const updated = await tx.botSession.update({
+        where: { id: existing.id },
+        data: {
+          currentStepId: step.id,
+          status: 'finished',
+          lastSentAt: new Date(),
+        },
+        include: { currentStep: true },
+      });
+      const exec = { ...updated, currentStep: step as never } as never;
+      await this.executeStep(tx, exec, ctx);
+      return this.toSessionSummary(updated, bot.id);
     }
+
+    // Sem sessão prévia — primeiro contato. Cria sessão e envia step 1.
     const step = await tx.botStep.findFirst({
       where: { botId: bot.id, ordem: 1 },
       orderBy: { ordem: 'asc' },
@@ -263,9 +382,12 @@ export class BotEngineService {
         tenantId: ctx.tenantId,
         currentStepId: step.id,
         status: 'finished',
+        lastSentAt: new Date(),
       },
       include: { currentStep: true },
     });
+    // 🔒 Bug 2 — Envia welcomeMessage do tenant (se houver) antes do step 1.
+    await this.maybeSendWelcome(tx, bot, ctx);
     const exec = { ...created, currentStep: step as never } as never;
     await this.executeStep(tx, exec, ctx);
     return this.toSessionSummary(created, bot.id);
@@ -273,29 +395,57 @@ export class BotEngineService {
 
   /**
    * Verifica horário de atendimento do tenant. Se o contato está fora do
-   * horário e `bot.offlineMessage` está definido, envia a offlineMessage e
+   * horário e `offlineMessage` está definido, envia a offlineMessage e
    * retorna `true` (caller deve abortar o fluxo normal).
    * Retorna `false` se: sem offlineMessage, sem businessHours (24/7), ou
    * dentro do horário.
+   *
+   * 🔒 Bug 2 — offlineMessage agora vem preferencialmente do Tenant. Mantemos
+   * fallback p/ bot.offlineMessage (deprecated) só se tenant não tiver.
    */
   private async handleBusinessHours(
     tx: Prisma.TransactionClient,
-    bot: { id: string; offlineMessage: string | null },
+    bot: {
+      id: string;
+      offlineMessage: string | null;
+      tenant?: {
+        timezone: string;
+        businessHours: Prisma.JsonValue;
+        offlineMessage: string | null;
+      } | null;
+    },
     ctx: BotInboundContext,
   ): Promise<boolean> {
-    if (!bot.offlineMessage) return false;
-    const tenant = await tx.tenant.findFirst({
-      where: { id: ctx.tenantId },
-      select: { timezone: true, businessHours: true },
-    });
-    if (!tenant) return false;
-    const bh = parseBusinessHours(tenant.businessHours);
-    if (isOpenAt(new Date(), bh, tenant.timezone)) return false;
+    // 🔒 Bug 2 — Preferência: Tenant.offlineMessage > Bot.offlineMessage (deprecated).
+    const tenantOffline = bot.tenant?.offlineMessage ?? null;
+    const botOffline = bot.offlineMessage; // fallback deprecated
+    const offlineMessage = tenantOffline ?? botOffline;
+    if (!offlineMessage) return false;
+
+    // Já temos o tenant carregado no `bot.tenant` — usamos pra evitar queries extras.
+    let timezone: string;
+    let businessHours: Prisma.JsonValue;
+    if (bot.tenant) {
+      timezone = bot.tenant.timezone;
+      businessHours = bot.tenant.businessHours;
+    } else {
+      // Fallback defensivo: se o tenant não veio no `bot`, busca agora.
+      const tenant = await tx.tenant.findFirst({
+        where: { id: ctx.tenantId },
+        select: { timezone: true, businessHours: true },
+      });
+      if (!tenant) return false;
+      timezone = tenant.timezone;
+      businessHours = tenant.businessHours;
+    }
+
+    const bh = parseBusinessHours(businessHours);
+    if (isOpenAt(new Date(), bh, timezone)) return false;
 
     try {
       await this.evolution.sendText(ctx.sessionName, {
         number: ctx.phone,
-        text: bot.offlineMessage,
+        text: offlineMessage,
       });
     } catch (err) {
       this.logger.warn(
@@ -309,7 +459,7 @@ export class BotEngineService {
         contactId: ctx.contactId,
         direction: 'outbound',
         type: 'text',
-        content: { type: 'text', text: bot.offlineMessage } as unknown as Prisma.InputJsonValue,
+        content: { type: 'text', text: offlineMessage } as unknown as Prisma.InputJsonValue,
         status: 'pending',
       },
     });
@@ -403,6 +553,13 @@ export class BotEngineService {
         content: step.conteudo as unknown as Prisma.InputJsonValue,
         status: 'pending',
       },
+    });
+    // 🔒 Bug 3 — Atualiza lastSentAt para suportar cooldown (futuro p/ AGENTS
+    // ou reuso em SIMPLE). Atualização leve.
+    await tx.botSession.update({
+      where: { id: session.id },
+      data: { lastSentAt: new Date() },
+      select: { id: true },
     });
   }
 

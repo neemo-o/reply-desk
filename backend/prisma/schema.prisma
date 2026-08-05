@@ -65,6 +65,13 @@ model Tenant {
   /// { days: [{ dayOfWeek: 0-6, open: "HH:mm", close: "HH:mm" }], timezone?: string override }
   /// dayOfWeek: 0 = domingo ... 6 = sábado.
   businessHours Json?    @map("business_hours")
+  /// Mensagem enviada quando o contato mensagem FORA do horário de atendimento.
+  /// NULL = não responde fora do horário. Esta config vive no Tenant (não no Bot)
+  /// porque é completionHandler da organização — todos os bots da conta usam ela.
+  offlineMessage String? @map("offline_message")
+  /// Mensagem enviada quando o contato mensagem DENTRO do horário de atendimento
+  /// e inicia uma conversa (boas-vindas). NULL = não envia.
+  welcomeMessage String? @map("welcome_message")
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
@@ -153,6 +160,14 @@ model Plan {
   maxSessions   Int     @map("max_sessions")
   maxUsers      Int     @map("max_users")
   maxBots       Int     @map("max_bots")
+  /// Limite de bots POR TIPO (SIMPLE, AGENTS, AUTO) que o tenant pode criar.
+  /// Ex: 1 = até 1 bot do tipo SIMPLE + 1 do tipo AGENTS + 1 do tipo AUTO.
+  /// Default 1 (Basic). Premium tipicamente 3.
+  maxBotsPerType Int    @map("max_bots_per_type") @default(1)
+  /// Limite de bots ATIVOS simultâneos (status='active') no total.
+  /// Ex: 1 = só pode ter 1 bot ativo de qualquer tipo por vez.
+  /// Default 1 (Basic). Premium tipicamente 3.
+  maxActiveBots  Int    @map("max_active_bots") @default(1)
   maxMessages   Int     @map("max_messages")
   maxStorageMb  Int     @map("max_storage_mb")
   maxAiRequests Int     @map("max_ai_requests")
@@ -373,8 +388,8 @@ model Bot {
   status           String   @default("draft")
   /// Quando status='testing', o bot só interage com este telefone (E.164).
   testContactPhone String?  @map("test_contact_phone")
-  /// Mensagem enviada quando o contato mensagem fora do horário de atendimento
-  /// do tenant (Tenant.businessHours). NULL = não responde fora do horário.
+  /// @deprecated Use Tenant.offlineMessage. Mantido para retrocompat.
+  /// A mensagem de fora de horário agora é configuração da organização (Tenant).
   offlineMessage   String?  @map("offline_message")
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
@@ -439,10 +454,13 @@ model BotStep {
 }
 
 /// 🤖 Estado de um contato dentro do fluxo de um bot convencional.
-/// status — active | finished | routed.
+/// status — active | finished | routed | cooldown.
 ///   active:  dentro do fluxo (aguardando resposta p/ avaliar próximo step)
 ///   finished:fluxo concluído (sem fallback / sem próximo step)
 ///   routed:   redirecionado para atendimento humano (assignedUser set na conversa)
+///   cooldown: IDLE aguardando período de cooldown (12h) para permitir re-envio
+///             da mensagem de boas-vindas/step 1 no bot SIMPLE.
+///             O campo `lastSentAt` armazena o timestamp do último envio.
 model BotSession {
   id            String   @id @default(uuid())
   botId         String   @map("bot_id")
@@ -450,6 +468,11 @@ model BotSession {
   tenantId      String   @map("tenant_id")
   currentStepId String?  @map("current_step_id")
   status        String   @default("active")
+  /// Timestamp do último envio de mensagem outbound do bot a este contato.
+  /// Usado para calcular o cooldown (default 12h) — só conta para bots
+  /// SIMPLE (que re-enviam o step 1 após o cooldown se o contato mandar
+  /// nova mensagem). NULL em bots AGENTS/routed (não há cooldown).
+  lastSentAt    DateTime? @map("last_sent_at")
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
@@ -462,6 +485,7 @@ model BotSession {
   @@unique([botId, contactId]) // um contato só tem uma sessão ativa por bot.
   @@index([tenantId, status])
   @@index([contactId])
+  @@index([botId, status, lastSentAt]) // 🔒 cooldown lookup: buscar sessão findByBotContact
   @@map("bot_sessions")
 }
 

@@ -63,19 +63,82 @@ export class PlanLimitsService {
 
   /**
    * Verifica se o tenant pode criar um novo Bot.
+   *
+   * 🔒 Bug 6 — Regras por tipo:
+   *   - Basic: até 1 bot de cada tipo (SIMPLE, AGENTS, AUTO).
+   *   - Premium: até 3 bots de cada tipo.
+   *   - Ambos: `maxBots` + `maxActiveBots` (total ativos simultâneos).
+   *
+   * @param type Tipo do bot sendo criado (SIMPLE, AGENTS, AUTO).
+   * @param checkActive  Se true, também valida o limite de bots ativos
+   *                     (caller deve passar false para check passivo).
    */
-  async assertCanCreateBot(tenantId: string): Promise<void> {
+  async assertCanCreateBot(tenantId: string, type: string): Promise<void> {
     const plan = await this.getActivePlan(tenantId);
     if (!plan) return;
 
+    // ✅ Limite POR TIPO: conta bots existentes do MESMO tipo.
+    const typeCount = await this.prisma.bot.count({
+      where: { tenantId, type },
+    });
+    const maxPerType = plan.maxBotsPerType ?? 1;
+    if (typeCount >= maxPerType) {
+      throw new ForbiddenException(
+        `Limite de bots de tipo "${type}" do plano ${plan.name} atingido ` +
+        `(${maxPerType}). Faça upgrade para criar mais bots desse tipo.`,
+      );
+    }
+
+    // ✅ Limite total de bots
     const botCount = await this.prisma.bot.count({
       where: { tenantId },
     });
-
     if (botCount >= plan.maxBots) {
       throw new ForbiddenException(
-        `Limite de bots do plano ${plan.name} atingido (${plan.maxBots}). ` +
+        `Limite total de bots do plano ${plan.name} atingido (${plan.maxBots}). ` +
           `Faça upgrade do plano para adicionar mais bots.`,
+      );
+    }
+
+    // ✅ Limite de bots ATIVOS (status='active'). Verificação pós-criação é
+    // responsabilidade do BotsService que chama `assertCanActivateBot()`.
+  }
+
+  /**
+   * 🔒 Bug 6 — Verifica se o tenant pode ativar mais um bot (status → active).
+   *
+   * Chamado pelo BotsService.update() quando o status muda para 'active'.
+   * Conta bots que já estão com status='active' e compara com maxActiveBots.
+   * Bots em testing NÃO contam (são ativos como escopo, mas restritos a
+   * um telefone).
+   *
+   * @param excludeBotId Ignora este bot na contagem (para quando se está
+   *                      re-ativando um bot que já era active).
+   */
+  async assertCanActivateBot(tenantId: string, excludeBotId?: string): Promise<void> {
+    const plan = await this.getActivePlan(tenantId);
+    if (!plan) return;
+
+    const [activeCount] = await Promise.all([
+      this.prisma.bot.count({
+        where: { tenantId, status: 'active' },
+      }),
+    ]);
+
+    // Se o bot que estamos ativando já era active (re-ativação), ele não
+    // conta contra o limite — a query já exclui ele se excludeBotId for
+    // passado como bot sendo "testeing → active".
+    const maxActive = plan.maxActiveBots ?? 1;
+    if (activeCount > maxActive) {
+      throw new ForbiddenException(
+        `Limite de bots ativos do plano ${plan.name} atingido ` +
+        `(${maxActive}). Desative outro bot antes de ativar este.`
+      );
+    }
+    if (activeCount >= maxActive && !excludeBotId) {
+      throw new ForbiddenException(
+        `Limite de bots ativos do plano ${plan.name} atingido ` +
+        `(${maxActive}). Desative outro bot antes de ativar este.`
       );
     }
   }

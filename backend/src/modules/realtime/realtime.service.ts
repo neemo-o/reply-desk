@@ -63,4 +63,19 @@ export class RealtimeService {
       this.logger.debug(`emitBotSessionChange falhou: ${(err as Error).message}`);
     }
   }
+
+  /**
+   * 🔒 Bug 5 — Notifica o frontend que a contagem de sessões ativas de um bot mudou.
+   * Payload leve: só o botId e o novo count (o frontend faz hash e compara).
+   */
+  emitBotSessionCount(
+    tenantId: string,
+    payload: { botId: string; activeSessions: number },
+  ) {
+    try {
+      this.gateway.server.to(`tenant:${tenantId}`).emit('bot.sessionCount', payload);
+    } catch (err) {
+      this.logger.debug(`emitBotSessionCount falhou: ${(err as Error).message}`);
+    }
+  }
 }

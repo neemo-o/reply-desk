@@ -4,6 +4,7 @@ import { TenantsService } from './tenants.service';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { InviteUserDto } from './dto/invite-user.dto';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
+import { UpdateTenantSettingsDto } from './dto/update-tenant-settings.dto';
 import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import { TransferOwnershipDto } from './dto/transfer-ownership.dto';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -70,6 +71,32 @@ export class TenantsController {
   @Patch()
   update(@CurrentTenant() tenantId: string, @Body() dto: UpdateTenantDto) {
     return this.tenantsService.update(tenantId, dto);
+  }
+
+  /**
+   * 🔒 Bug 2 — Configurações de atendimento do tenant (owner+admin).
+   * Inclui: businessHours, offlineMessage, welcomeMessage, timezone.
+   * Suporta os mesmos campos do PATCH /tenants (name, language) também.
+   */
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles('owner', 'admin')
+  @Patch('settings')
+  updateSettings(
+    @CurrentTenant() tenantId: string,
+    @Body() dto: UpdateTenantSettingsDto,
+  ) {
+    return this.tenantsService.updateSettings(tenantId, dto);
+  }
+
+  /**
+   * 🔒 Bug 2 — Recupera configurações completas do tenant (inclui
+   * businessHours, offlineMessage, welcomeMessage) para o frontend.
+   */
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles('owner', 'admin')
+  @Get('settings')
+  getSettings(@CurrentTenant() tenantId: string) {
+    return this.tenantsService.getSettings(tenantId);
   }
 
   @UseGuards(TenantGuard, RolesGuard)
