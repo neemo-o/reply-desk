@@ -1,6 +1,7 @@
 import { apiClient } from "./api-client";
 import type { TenantMember } from "@/types/billing";
 import type { TenantRole } from "@/types/auth";
+import type { BusinessHours } from "@/types/bots";
 
 export interface TenantSummary {
   id: string;
@@ -11,6 +12,9 @@ export interface TenantSummary {
   createdAt: string;
   timezone?: string;
   language?: string;
+  businessHours?: BusinessHours | null;
+  offlineMessage?: string | null;
+  welcomeMessage?: string | null;
 }
 
 export interface TenantDetails {
@@ -20,6 +24,29 @@ export interface TenantDetails {
   logo: string | null;
   timezone: string;
   language: string;
+}
+
+export interface TenantSettings {
+  id: string;
+  name: string;
+  slug: string;
+  logo: string | null;
+  timezone: string | null;
+  language: string | null;
+  businessHours: BusinessHours | null;
+  offlineMessage: string | null;
+  welcomeMessage: string | null;
+}
+
+export interface UpdateTenantSettingsPayload {
+  name?: string;
+  slug?: string;
+  logo?: string | null;
+  timezone?: string;
+  language?: string;
+  businessHours?: BusinessHours | null;
+  offlineMessage?: string | null;
+  welcomeMessage?: string | null;
 }
 
 export interface UpdateTenantPayload {
@@ -74,6 +101,16 @@ export const tenantsService = {
 
   async updateTenant(payload: UpdateTenantPayload): Promise<TenantDetails> {
     const { data } = await apiClient.patch<TenantDetails>("/tenants", payload);
+    return data;
+  },
+
+  async getSettings(): Promise<TenantSettings> {
+    const { data } = await apiClient.get<TenantSettings>("/tenants/settings");
+    return data;
+  },
+
+  async updateSettings(payload: UpdateTenantSettingsPayload): Promise<TenantSettings> {
+    const { data } = await apiClient.patch<TenantSettings>("/tenants/settings", payload);
     return data;
   },
 

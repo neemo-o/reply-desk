@@ -7,6 +7,10 @@ export interface Plan {
   maxSessions: number;
   maxUsers: number;
   maxBots: number;
+  /** Limite de bots por tipo (SIMPLE, AGENTS, AUTO). */
+  maxBotsPerType: number;
+  /** Limite de bots ATIVOS simultâneos (status='active'). */
+  maxActiveBots: number;
   maxMessages: number;
   maxStorageMb: number;
   maxAiRequests: number;

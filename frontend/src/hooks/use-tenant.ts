@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   tenantsService,
   type UpdateTenantPayload,
+  type UpdateTenantSettingsPayload,
   type UpdateMemberRolePayload,
   type InviteMemberPayload,
 } from "@/services/tenants-service";
@@ -43,6 +44,35 @@ export function useUpdateTenant() {
     },
     onError: (error) => {
       toast.error(extractApiErrorMessage(error, "Não foi possível atualizar a organização"));
+    },
+  });
+}
+
+export function useTenantSettings() {
+  const { isAuthenticated, tenant } = useAuth();
+  const canManage = tenant?.role === "owner" || tenant?.role === "admin";
+
+  return useQuery({
+    queryKey: ["tenants", "settings", tenant?.id],
+    queryFn: () => tenantsService.getSettings(),
+    enabled: isAuthenticated && Boolean(tenant) && canManage,
+  });
+}
+
+export function useUpdateTenantSettings() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: UpdateTenantSettingsPayload) =>
+      tenantsService.updateSettings(payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tenants"] });
+      toast.success("Configurações da organização salvas");
+    },
+    onError: (error) => {
+      toast.error(
+        extractApiErrorMessage(error, "Não foi possível salvar as configurações da organização"),
+      );
     },
   });
 }

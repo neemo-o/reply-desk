@@ -8,6 +8,7 @@ import {
 } from '../../../common/evolution/evolution-message-parser.service';
 import { RealtimeService } from '../../realtime/realtime.service';
 import { isUuid } from '../../../common/utils/security';
+import { phonesEqual } from '../../../common/utils/phone-normalize';
 import {
   ValidatedStepContent,
   ListContent,
@@ -175,7 +176,7 @@ export class BotEngineService {
 
     // 4. Modo testing — só responde ao testContactPhone.
     if (bot.status === 'testing') {
-      if (!bot.testContactPhone || ctx.phone !== bot.testContactPhone) {
+      if (!bot.testContactPhone || !phonesEqual(ctx.phone, bot.testContactPhone)) {
         this.logger.log(
           `bot ${bot.id} em testing — contato ${ctx.phone} ignorado (esperado ${bot.testContactPhone ?? '-'})`,
         );
@@ -183,11 +184,14 @@ export class BotEngineService {
       }
     }
 
-    // 5. Fora de horário — se offlineMessage (tenant) definido e contato fora do
-    //    horário, envia mensagem única e aborta o fluxo.
-    const offlineSent = await this.handleBusinessHours(tx, bot, ctx);
-    if (offlineSent) {
-      return null;
+    // 5. Fora de horário — só AGENTS honra o horário de atendimento.
+    //    Bots SIMPLE não usam horário: enviam a única mensagem sempre que acionados,
+    //    então a mensagem fora do horário nunca se aplica e não é verificada.
+    if (bot.type !== 'SIMPLE') {
+      const offlineSent = await this.handleBusinessHours(tx, bot, ctx);
+      if (offlineSent) {
+        return null;
+      }
     }
 
     // 6. Carrega/recupera sessão.
@@ -293,6 +297,11 @@ export class BotEngineService {
    * 🔒 Bug 3 — Cooldown de 12h: se já existe sessão finished para este
    * (bot, contato), só reenvia o step 1 se já passaram ≥12h desde o último
    * envio (lastSentAt). Caso contrário, ignora a mensagem (return null-like).
+   *
+   * 🔒 Exceção: bots em status='testing' IGNORAM o cooldown — o objetivo do
+   * modo testing é permitir testes iterativos, e exigir 12h entre cada
+   * tentativa tornaria o diagnóstico impraticável. Apenas ignoramos o runtime
+   * do cooldown e enviamos o step 1 (criando nova sessão finished) a cada inbound.
    */
   private async handleSimpleInbound(
     tx: Prisma.TransactionClient,
@@ -301,6 +310,7 @@ export class BotEngineService {
     existing: { id: string; status: string; lastSentAt?: Date | null } | null,
   ): Promise<{ id: string; botId: string; status: string; currentStep: { ordem: number } | null } | null> {
     const COOLDOWN_MS = 12 * 60 * 60 * 1000; // 12 horas
+    const isTesting = bot.status === 'testing';
 
     // 🔒 Bug 3 — Se já existe sessão (active/finished/cooldown/routed),
     // respeita o cooldown._sessões não-active significam que o fluxo já
@@ -322,7 +332,8 @@ export class BotEngineService {
       }
 
       // finished/routed/cooldown — só re-envia se cooldown esgotou.
-      if (inCooldown) {
+      // 🔒 Exceção: em testing, ignora o cooldown e continua p/ reenvio abaixo.
+      if (inCooldown && !isTesting) {
         this.logger.log(
           `bot SIMPLE ${bot.id} em cooldown p/ contato ${ctx.contactId} ` +
           `(último envio=${lastSent ? new Date(lastSent).toISOString() : '-'}, faltam ${
@@ -342,6 +353,14 @@ export class BotEngineService {
         };
       }
 
+      if (inCooldown && isTesting) {
+        this.logger.debug(
+          `bot SIMPLE ${bot.id} em testing — cooldown ignorado p/ teste iterativo (contato ${ctx.contactId}, último envio=${
+            lastSent ? new Date(lastSent).toISOString() : '-'
+          })`,
+        );
+      }
+
       // Cooldown esgotado — RE-ENVIA o step 1 (cria nova sessão? não: reusa
       // a existente, setando status finished e lastSentAt=now).
       const step = await tx.botStep.findFirst({
@@ -352,6 +371,10 @@ export class BotEngineService {
         this.logger.warn(`bot SIMPLE ${bot.id} sem step ordem=1`);
         return null;
       }
+      this.logger.debug(
+        `🤖 handleSimpleInbound — reenviando step 1 (sessão existente ${existing.id}) ` +
+        `tipoMensagem=${step.tipoMensagem} conteudo=${JSON.stringify(step.conteudo).slice(0, 500)}`,
+      );
       const updated = await tx.botSession.update({
         where: { id: existing.id },
         data: {
@@ -372,9 +395,10 @@ export class BotEngineService {
       orderBy: { ordem: 'asc' },
     });
     if (!step) {
-      this.logger.warn(`bot SIMPLE ${bot.id} sem step ordem=1`);
+      this.logger.warn(`🤖 handleSimpleInbound — bot SIMPLE ${bot.id} sem step ordem=1 (não há mensagem p/ enviar)`);
       return null;
     }
+    this.logger.debug(`🤖 handleSimpleInbound — criando BotSession e enviando step 1 (bot ${bot.id} step ${step.id} ordem=${step.ordem})`);
     const created = await tx.botSession.create({
       data: {
         botId: bot.id,
@@ -720,7 +744,27 @@ export class BotEngineService {
     try {
       if (tipo === 'text') {
         const c = conteudo as TextContent;
-        await this.evolution.sendText(sessionName, { number, text: c.text });
+        // 🔒 Defensive: alguns steps legados podem ter sido gravados em formato
+        // alternativo (ex.: { type:'text', value:'...' } ou { type:'text', texto:'...' }).
+        // Se c.text vier vazio/undefined, tentamos campos comuns antes de falhar.
+        const alt = conteudo as unknown as Record<string, unknown>;
+        const text =
+          (c.text && String(c.text).length > 0 && c.text) ||
+          (alt.value as string | undefined) ||
+          (alt.texto as string | undefined) ||
+          (alt.message as string | undefined) ||
+          '';
+        if (!text || text.trim().length === 0) {
+          this.logger.error(
+            `step text sem propriedade "text" não-vazia — keys=${Object.keys(alt).join(',')} ` +
+            `conteudo=${JSON.stringify(conteudo).slice(0, 500)}`,
+          );
+          return;
+        }
+        this.logger.debug(
+          `🤖 sendStepMessage text — text.length=${text.length} preview="${text.slice(0, 60)}"`,
+        );
+        await this.evolution.sendText(sessionName, { number, text });
       } else if (tipo === 'list') {
         const c = conteudo as ListContent;
         await this.evolution.sendList(sessionName, {

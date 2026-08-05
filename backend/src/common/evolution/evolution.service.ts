@@ -345,12 +345,23 @@ export class EvolutionService {
    * Envia uma mensagem de texto via Evolution API.
    * Endpoint: POST /message/sendText/{instance}
    *
-   * Payload (Evolution API v2, integration WHATSAPP-BAILEYS):
+   * Payload (Evolution API v2.3+):
    *   {
    *     number:  "5511999999999",        // E.164 sem +, sem @s.whatsapp.net
    *     options: { delay: 1200, ... },
-   *     textMessage: { text: "..." }
+   *     text:    "..."                    // 📌 campo 'text' no NÍVEL SUPERIOR
    *   }
+   *
+   * 🔒 M24 — A Evolution API v2.3.7 alterou o schema deste endpoint. Em
+   * builds anteriores o texto era enviado dentro de `textMessage.text`; em
+   * v2.3.7 isso retorna HTTP 400 com `instance requires property "text"`.
+   * O texto passou a ser exigido no nível superior do payload como `text`.
+   * Comparação viva (rd-54dd700f, 2026-08-05):
+   *   - { number, textMessage:{text:"x"} } → 400 instance requires property "text"
+   *   - { number, text:"x" }               → 200 PENDING, mensagem entregue
+   * Mantemos retrocompatibilidade bilateral enviando `text` no nível superior
+   * (suportado por builds recentes) — o `textMessage` legado foi removido
+   * porque builds recentes o rejeitam.
    *
    * Retorno (típico): { key: { id, ... }, message: { ... }, status: "PENDING"|"SENT" }
    */
@@ -362,7 +373,7 @@ export class EvolutionService {
     const payload = {
       number: input.number,
       options: { delay: input.delayMs ?? 1200 },
-      textMessage: { text: input.text },
+      text: input.text,
     };
     return this.call('POST', `/message/sendText/${encodeURIComponent(instanceName)}`, payload);
   }

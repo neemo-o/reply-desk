@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { LucideIcon } from "lucide-react";
-import { Bot, Plus, Trash2, Edit, Megaphone, MessageSquare } from "lucide-react";
+import { Bot, Plus, Trash2, Edit, Megaphone, MessageSquare, Hash } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@/layouts/dashboard-layout";
 import { Card, CardContent } from "@/components/ui/card";
@@ -21,11 +21,13 @@ import {
   Sheet,
   SheetContent,
   SheetHeader,
+  SheetFooter,
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useBots, useCreateBot, useDeleteBot } from "@/hooks/use-bots";
+import { useSubscription } from "@/hooks/use-subscription";
 import { cn } from "@/lib/utils";
 import type { BotType, Bot as APIBot } from "@/types/bots";
 
@@ -67,6 +69,7 @@ const TYPE_ORDER: BotType[] = ["SIMPLE", "AGENTS", "AUTO"];
 
 export function BotsPage() {
   const { data: bots, isLoading } = useBots();
+  const { data: subscription } = useSubscription();
   const createBot = useCreateBot();
   const deleteBot = useDeleteBot();
   const navigate = useNavigate();
@@ -74,8 +77,6 @@ export function BotsPage() {
   const [name, setName] = useState("");
   const [type, setType] = useState<BotType>(TYPE_DEFAULTS);
   const [description, setDescription] = useState("");
-  const [testContactPhone, setTestContactPhone] = useState("");
-  const [offlineMessage, setOfflineMessage] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   const grouped = useMemo(() => {
@@ -84,23 +85,26 @@ export function BotsPage() {
     return map;
   }, [bots]);
 
+  const activeCount = useMemo(
+    () => (bots ?? []).filter((b) => b.status === "active").length,
+    [bots],
+  );
+
+  const plan = subscription?.plan;
+  const maxActiveBots = plan?.maxActiveBots ?? 0;
+
   function handleCreate() {
     if (!name.trim()) return;
-    const digitsOnly = testContactPhone.trim() ? testContactPhone.replace(/\D/g, "") : undefined;
     createBot.mutate(
       {
         name: name.trim(),
         type,
         description: description.trim() || undefined,
-        testContactPhone: digitsOnly || undefined,
-        offlineMessage: offlineMessage.trim() || undefined,
       },
       {
         onSuccess: (bot) => {
           setName("");
           setDescription("");
-          setTestContactPhone("");
-          setOfflineMessage("");
           setCreateOpen(false);
           if (bot.type === "AUTO") navigate(`/dashboard/broadcasts/${bot.id}`);
           else navigate(`/dashboard/bots/${bot.id}`);
@@ -121,16 +125,23 @@ export function BotsPage() {
             Crie bots conversacionais e campanhas de auto-mensagem.
           </p>
         </div>
-        <Button
-          onClick={() => {
-            setType(TYPE_DEFAULTS);
-            setCreateOpen(true);
-          }}
-          disabled={createBot.isPending}
-        >
-          <Plus className="h-4 w-4" />
-          Novo Bot
-        </Button>
+        <div className="flex items-center gap-3">
+          <ActiveBotsBadge
+            total={activeCount}
+            max={maxActiveBots}
+            isLoading={isLoading}
+          />
+          <Button
+            onClick={() => {
+              setType(TYPE_DEFAULTS);
+              setCreateOpen(true);
+            }}
+            disabled={createBot.isPending}
+          >
+            <Plus className="h-4 w-4" />
+            Novo Bot
+          </Button>
+        </div>
       </div>
 
       {isLoading ? (
@@ -150,8 +161,14 @@ export function BotsPage() {
           {TYPE_ORDER.map((t) =>
             grouped[t].length > 0 ? (
               <section key={t} className="mb-8">
-                <h2 className="mb-3 text-sm font-semibold uppercase text-muted-foreground/70">
+                <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase text-muted-foreground/70">
                   {TYPE_LABEL[t]}
+                  <span className="inline-flex items-center rounded-full bg-secondary px-2 py-0.5 text-xs font-medium normal-case text-muted-foreground tabular-nums">
+                    {grouped[t].length}
+                    {plan?.maxBotsPerType
+                      ? ` / ${plan.maxBotsPerType}`
+                      : ""}
+                  </span>
                 </h2>
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   {grouped[t].map((bot) => (
@@ -175,37 +192,47 @@ export function BotsPage() {
 
       {/* Criar bot — Sheet */}
       <Sheet open={createOpen} onOpenChange={setCreateOpen}>
-        <SheetContent>
+        <SheetContent className="flex flex-col gap-0 p-0">
           <SheetHeader>
-            <SheetTitle>Novo Bot</SheetTitle>
+            <SheetTitle className="flex items-center gap-2">
+              <Bot className="h-5 w-5" />
+              Novo Bot
+            </SheetTitle>
           </SheetHeader>
-          <div className="space-y-4 pt-2">
-            <div>
-              <Label htmlFor="bname">Nome</Label>
-              <Input
-                id="bname"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Ex: Atendimento automático"
-              />
+
+          <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="bname" className="text-xs">Nome</Label>
+                <Input
+                  id="bname"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Ex: Atendimento automático"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="btype" className="text-xs">Tipo</Label>
+                <select
+                  id="btype"
+                  value={type}
+                  onChange={(e) => setType(e.target.value as BotType)}
+                  className="h-10 w-full rounded-md border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                >
+                  {TYPE_ORDER.map((t) => (
+                    <option key={t} value={t}>
+                      {TYPE_LABEL[t]}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
+            <p className="text-xs text-muted-foreground">
+              {TYPE_DESCRIPTION[type]}
+            </p>
+
             <div className="space-y-1.5">
-              <Label>Tipo</Label>
-              <select
-                value={type}
-                onChange={(e) => setType(e.target.value as BotType)}
-                className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-              >
-                {TYPE_ORDER.map((t) => (
-                  <option key={t} value={t}>
-                    {TYPE_LABEL[t]}
-                  </option>
-                ))}
-              </select>
-              <p className="text-xs text-muted-foreground">{TYPE_DESCRIPTION[type]}</p>
-            </div>
-            <div>
-              <Label htmlFor="bdesc">Descrição (opcional)</Label>
+              <Label htmlFor="bdesc" className="text-xs">Descrição (opcional)</Label>
               <Input
                 id="bdesc"
                 value={description}
@@ -213,41 +240,16 @@ export function BotsPage() {
                 placeholder="Para que serve este bot"
               />
             </div>
-            <div>
-              <Label htmlFor="bphone">Telefone para testes (opcional, E.164)</Label>
-              <Input
-                id="bphone"
-                value={testContactPhone}
-                onChange={(e) => setTestContactPhone(e.target.value)}
-                placeholder="5511999999999"
-                className="font-mono text-sm"
-                inputMode="numeric"
-              />
-              <p className="text-xs text-muted-foreground">
-                Só dígitos (DDI + DDD + número, sem "+"). Quando o status
-                for "testing", o bot só responde a este número.
-              </p>
-            </div>
-            <div>
-              <Label htmlFor="boffline">Mensagem fora do horário (opcional)</Label>
-              <textarea
-                id="boffline"
-                value={offlineMessage}
-                onChange={(e) => setOfflineMessage(e.target.value)}
-                rows={2}
-                placeholder="Responderemos no próximo horário de atendimento"
-                className="w-full rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              />
-            </div>
           </div>
-          <div className="flex justify-end gap-2 pt-4">
+
+          <SheetFooter className="flex-row justify-end gap-2">
             <Button onClick={() => setCreateOpen(false)} variant="outline">
               Cancelar
             </Button>
             <Button onClick={handleCreate} disabled={!name.trim() || createBot.isPending}>
               {createBot.isPending ? "Criando…" : "Criar"}
             </Button>
-          </div>
+          </SheetFooter>
         </SheetContent>
       </Sheet>
 
@@ -356,5 +358,43 @@ function BotCard({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+// ─── badge de bots ativos (ativos / limiar do plano) ────────────────
+
+function ActiveBotsBadge({
+  total,
+  max,
+  isLoading,
+}: {
+  total: number;
+  max: number;
+  isLoading: boolean;
+}) {
+  if (isLoading) {
+    return <Skeleton className="h-9 w-32 rounded-full" />;
+  }
+  if (max <= 0) {
+    // Sem plano/limite conhecido — não exibe nada.
+    return null;
+  }
+  const atLimit = total >= max;
+  return (
+    <Badge
+      variant={atLimit ? "warning" : "outline"}
+      className="h-9 gap-1.5 px-3 text-xs font-medium"
+      title={
+        atLimit
+          ? "Limite de bots ativos do plano atingido — desative um bot ou faça upgrade para ativar mais"
+          : `${total} de ${max} bots ativos no plano`
+      }
+    >
+      <Hash className="h-3.5 w-3.5" />
+      <span className="tabular-nums">
+        {total}/{max}
+      </span>{" "}
+      ativos
+    </Badge>
   );
 }

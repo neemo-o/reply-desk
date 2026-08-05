@@ -86,7 +86,7 @@ export class BotsService {
         triggers: { select: { id: true, tipo: true, valor: true } },
         _count: {
           select: {
-            sessions: { where: { status: 'active' } },
+            sessions: { where: { status: 'connected' } },
             broadcasts: true,
           },
         },

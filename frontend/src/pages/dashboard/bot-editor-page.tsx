@@ -10,6 +10,7 @@ import {
   Save,
   Edit2,
   X,
+  AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { DashboardLayout } from "@/layouts/dashboard-layout";
@@ -31,6 +32,7 @@ import {
   useUpdateBot,
   useTestBot,
 } from "@/hooks/use-bots";
+import { useTenantSummary } from "@/hooks/use-tenant";
 import { cn } from "@/lib/utils";
 import type {
   BotStatus,
@@ -160,20 +162,29 @@ export function BotEditorPage() {
 type BotLike = {
   id: string;
   name: string;
+  type: "SIMPLE" | "AGENTS" | "AUTO";
   description?: string | null;
   testContactPhone?: string | null;
-  offlineMessage?: string | null;
 };
 
 function ConfigPanel({ botId, bot }: { botId: string; bot: BotLike }) {
   const updateBot = useUpdateBot();
+  const { data: tenantSummary } = useTenantSummary();
+  const navigate = useNavigate();
   const [name, setName] = useState(bot.name);
   const [description, setDescription] = useState(bot.description ?? "");
   const [testPhone, setTestPhone] = useState(
     (bot.testContactPhone ?? "").replace(/\D/g, ""),
   );
-  const [offline, setOffline] = useState(bot.offlineMessage ?? "");
   const [dirty, setDirty] = useState(false);
+
+  const hasBusinessHours = Boolean(
+    tenantSummary?.businessHours &&
+      tenantSummary.businessHours.days &&
+      tenantSummary.businessHours.days.length > 0,
+  );
+
+  const isAgents = bot.type === "AGENTS";
 
   function mark<T>(setter: (v: T) => void) {
     return (v: T) => {
@@ -190,7 +201,6 @@ function ConfigPanel({ botId, bot }: { botId: string; bot: BotLike }) {
         name: name.trim() || bot.name,
         description: description.trim() || null,
         testContactPhone: digitsOnly && digitsOnly.length > 0 ? digitsOnly : null,
-        offlineMessage: offline.trim() || null,
       },
       { onSuccess: () => { setDirty(false); toast.success("Configurações salvas."); } },
     );
@@ -200,6 +210,29 @@ function ConfigPanel({ botId, bot }: { botId: string; bot: BotLike }) {
     <Card>
       <CardContent className="space-y-4 p-5">
         <h3 className="text-sm font-semibold">Configurações</h3>
+
+        {!hasBusinessHours && isAgents && (
+          <div className="flex items-start gap-3 rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+            <div className="space-y-0.5">
+              <p className="font-medium text-amber-700 dark:text-amber-300">
+                Sem horário de atendimento configurado
+              </p>
+              <p className="text-xs text-amber-700/80 dark:text-amber-300/80">
+                A mensagem fora do horário não será verificada nem enviada
+                enquanto a organização não tiver um horário definido.
+              </p>
+              <button
+                type="button"
+                onClick={() => navigate("/dashboard/profile")}
+                className="text-xs font-medium text-amber-800 underline-offset-2 hover:underline dark:text-amber-200"
+              >
+                Configurar horário nas configurações da organização →
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label htmlFor="cfg-name" className="text-xs">Nome</Label>
@@ -218,7 +251,7 @@ function ConfigPanel({ botId, bot }: { botId: string; bot: BotLike }) {
               placeholder="(opcional)"
             />
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 sm:col-span-2">
             <Label htmlFor="cfg-phone" className="text-xs">
               Telefone para testes (E.164, só dígitos)
             </Label>
@@ -234,19 +267,6 @@ function ConfigPanel({ botId, bot }: { botId: string; bot: BotLike }) {
               DDI + DDD + número, sem "+". Ex: 5511999999999. Bot em
               "testing" só responde a este número.
             </p>
-          </div>
-          <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="cfg-offline" className="text-xs">
-              Mensagem fora do horário (opcional)
-            </Label>
-            <textarea
-              id="cfg-offline"
-              value={offline}
-              onChange={(e) => mark(setOffline)(e.target.value)}
-              rows={2}
-              placeholder="Responderemos no próximo horário"
-              className="w-full rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            />
           </div>
         </div>
         <div className="flex justify-end">
@@ -500,39 +520,48 @@ function StepsPanel({
           </ul>
         )}
 
-        <div className="border-t pt-4">
-          <h4 className="mb-3 text-sm font-semibold">Novo step</h4>
-          <div className="grid gap-3 lg:grid-cols-[1fr_140px]">
-            <MessageContentForm
-              type={newType}
-              onTypeChange={setNewType}
-              value={newContent}
-              onChange={setNewContent}
-              allowHandoff={isAgents}
-            />
-            <div className="space-y-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="new-order" className="text-xs">Ordem</Label>
-                <Input
-                  id="new-order"
-                  type="number"
-                  min={1}
-                  value={newOrder}
-                  onChange={(e) =>
-                    setNewOrder(parseInt(e.target.value, 10) || 1)
-                  }
-                />
+        {(isAgents || steps.length === 0) && (
+          <div className="border-t pt-4">
+            <h4 className="mb-3 text-sm font-semibold">Novo step</h4>
+            <div className="grid gap-3 lg:grid-cols-[1fr_140px]">
+              <MessageContentForm
+                type={newType}
+                onTypeChange={setNewType}
+                value={newContent}
+                onChange={setNewContent}
+                allowHandoff={isAgents}
+              />
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="new-order" className="text-xs">Ordem</Label>
+                  <Input
+                    id="new-order"
+                    type="number"
+                    min={1}
+                    value={newOrder}
+                    onChange={(e) =>
+                      setNewOrder(parseInt(e.target.value, 10) || 1)
+                    }
+                  />
+                </div>
+                <Button
+                  onClick={addStep}
+                  disabled={createStep.isPending}
+                  className="w-full"
+                >
+                  <Plus className="h-4 w-4" /> Adicionar
+                </Button>
               </div>
-              <Button
-                onClick={addStep}
-                disabled={createStep.isPending}
-                className="w-full"
-              >
-                <Plus className="h-4 w-4" /> Adicionar
-              </Button>
             </div>
           </div>
-        </div>
+        )}
+
+        {!isAgents && steps.length > 0 && (
+          <div className="rounded-md border border-dashed bg-secondary/20 px-3 py-2 text-xs text-muted-foreground">
+            Bot comum envia apenas uma mensagem e finaliza a interação — não é
+            possível adicionar mais steps.
+          </div>
+        )}
       </CardContent>
     </Card>
   );
