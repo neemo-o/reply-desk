@@ -17,6 +17,7 @@ export interface SandboxEvent {
   type: string;
   text?: string;
   selectedId?: string;
+  payload?: Record<string, unknown>;
   timestamp: string;
 }
 
@@ -263,7 +264,13 @@ export class SandboxBotService {
   ) {
     if (tipo === 'text') {
       const c = conteudo as TextContent;
-      events.push({ direction: 'bot', type: 'text', text: c.text, timestamp });
+      events.push({
+        direction: 'bot',
+        type: 'text',
+        text: c.text,
+        payload: { text: c.text },
+        timestamp,
+      });
     } else if (tipo === 'list') {
       const c = conteudo as ListContent;
       events.push({
@@ -271,6 +278,23 @@ export class SandboxBotService {
         type: 'list',
         text: c.title,
         selectedId: c.sections.flatMap((s) => s.rows.map((r) => `${r.title}:${r.id}`)).join('\n'),
+        // Payload alinhado ao schema Evolution API v2.3.7 (SendListDto / listMessageSchema):
+        // flat, com `footerText`, `buttonText`, `sections` (não mais `sectionsText`/`descriptionText`).
+        payload: {
+          listMessage: {
+            title: c.title,
+            footerText: c.text,
+            buttonText: c.buttonText,
+            sections: c.sections.map((s) => ({
+              title: s.title,
+              rows: s.rows.map((r) => ({
+                rowId: r.id,
+                title: r.title,
+                ...((r.description ?? '').length > 0 ? { description: r.description } : {}),
+              })),
+            })),
+          },
+        },
         timestamp,
       });
     } else if (tipo === 'buttons') {
@@ -280,10 +304,41 @@ export class SandboxBotService {
         type: 'buttons',
         text: c.text,
         selectedId: c.buttons.map((b) => `${b.title}:${b.id}`).join('\n'),
+        // Payload alinhado ao schema Evolution API v2.3.7 (SendButtonsDto / buttonsMessageSchema):
+        // flat, cada botão usa { type: 'reply', id, displayText } (não mais `reply.title`/`index`).
+        payload: {
+          buttonsMessage: {
+            title: c.text,
+            ...(c.footer ? { footer: c.footer } : {}),
+            buttons: c.buttons.map((b) => ({
+              type: 'reply',
+              id: b.id,
+              displayText: b.title,
+            })),
+          },
+        },
         timestamp,
       });
     } else if (tipo === 'media') {
       const c = conteudo as MediaContent;
+      const payload: Record<string, unknown> = {};
+      if (c.mediaType === 'image' || c.mediaType === 'video' || c.mediaType === 'document') {
+        // SendMediaDto — payload flat (não `mediaMessage.mediatype`).
+        payload.mediaMessage = {
+          mediatype: c.mediaType,
+          media: c.url,
+          ...(c.caption ? { caption: c.caption } : {}),
+          ...(c.mediaType === 'document'
+            ? { fileName: c.url.split('/').pop() ?? 'file' }
+            : {}),
+        };
+      } else if (c.mediaType === 'sticker') {
+        // SendStickerDto — endpoint próprio, campo `sticker` (não `mediatype`).
+        payload.mediaMessage = { sticker: c.url };
+      } else if (c.mediaType === 'audio') {
+        // SendAudioDto — endpoint sendWhatsAppAudio, campo `audio`.
+        payload.audioMessage = { audio: c.url };
+      }
       events.push({
         direction: 'bot',
         type: 'media',
@@ -291,6 +346,7 @@ export class SandboxBotService {
           c.mediaType === 'image' || c.mediaType === 'video' || c.mediaType === 'document'
             ? (c.caption ?? c.url)
             : c.url,
+        payload,
         timestamp,
       });
     } else if (tipo === 'handoff') {

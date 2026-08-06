@@ -13,13 +13,22 @@ export interface TextContent extends StepContent {
 
 export interface ButtonsContent extends StepContent {
   type: 'buttons';
+  /// Corpo principal (header bold) exibido acima dos botões. Na Evolution API
+  /// v2.3.7 (SendButtonsDto) este campo é enviado como `title`.
   text: string;
+  /// Rodapé opcional exibido abaixo dos botões (campo `footer` na Evolution).
+  footer?: string;
   buttons: { id: string; title: string }[];
 }
 
 export interface ListContent extends StepContent {
   type: 'list';
+  /// Título da lista (cabeçalho da lista — campo `title` na Evolution API).
   title: string;
+  /// Texto da lista (corpo/rodapé da mensagem — enviado como `footerText` na
+  /// Evolution API v2.3.7 / `SendListDto.footerText`). Em UI do WhatsApp é o
+  /// subtítulo mostrado abaixo do título.
+  text: string;
   buttonText: string;
   sections: {
     title: string;
@@ -75,7 +84,10 @@ export function validateStepContent(
   }
 
   if (tipoMensagem === 'buttons') {
-    if (typeof conteudo.text !== 'string') {
+    // Retrocompat: steps legados podem ter buttons sem `text` — default vazio.
+    const text =
+      typeof conteudo.text === 'string' ? conteudo.text : '';
+    if (text.trim().length === 0 && (!Array.isArray(conteudo.buttons) || conteudo.buttons.length === 0)) {
       throw new BadRequestException('conteudo.text é obrigatório para tipo buttons');
     }
     const buttons = conteudo.buttons;
@@ -89,16 +101,23 @@ export function validateStepContent(
     }
     return {
       type: 'buttons',
-      text: conteudo.text,
+      text,
+      ...(typeof conteudo.footer === 'string' ? { footer: conteudo.footer } : {}),
       buttons: buttons as { id: string; title: string }[],
     } as ButtonsContent;
   }
 
   if (tipoMensagem === 'list') {
-    if (typeof conteudo.title !== 'string') {
+    if (typeof conteudo.title !== 'string' || conteudo.title.trim().length === 0) {
       throw new BadRequestException('conteudo.title é obrigatório para tipo list');
     }
-    if (typeof conteudo.buttonText !== 'string') {
+    // Retrocompat: steps salvos antes deste fix podem não ter `text` (footerText)
+    // — fallback para vazio em vez de falhar a validação.
+    const text =
+      typeof conteudo.text === 'string'
+        ? conteudo.text
+        : '';
+    if (typeof conteudo.buttonText !== 'string' || conteudo.buttonText.trim().length === 0) {
       throw new BadRequestException('conteudo.buttonText é obrigatório para tipo list');
     }
     const sections = conteudo.sections;
@@ -121,6 +140,7 @@ export function validateStepContent(
     return {
       type: 'list',
       title: conteudo.title,
+      text,
       buttonText: conteudo.buttonText,
       sections: sections as ListContent['sections'],
     } as ListContent;

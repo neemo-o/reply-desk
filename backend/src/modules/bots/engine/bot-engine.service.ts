@@ -770,15 +770,16 @@ export class BotEngineService {
         await this.evolution.sendList(sessionName, {
           number,
           title: c.title,
+          footerText: c.text,
           buttonText: c.buttonText,
-          text: c.title,
           sections: c.sections,
         });
       } else if (tipo === 'buttons') {
         const c = conteudo as ButtonsContent;
         await this.evolution.sendButtons(sessionName, {
           number,
-          text: c.text,
+          title: c.text,
+          ...(c.footer ? { footer: c.footer } : {}),
           buttons: c.buttons,
         });
       } else if (tipo === 'media') {

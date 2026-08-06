@@ -102,6 +102,7 @@ export interface SandboxEvent {
   type: string;
   text?: string;
   selectedId?: string;
+  payload?: Record<string, unknown>;
   timestamp: string;
 }
 

@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useTestBot } from "@/hooks/use-bots";
 import { cn } from "@/lib/utils";
-import type { SandboxResult } from "@/types/bots";
+import type { SandboxEvent, SandboxResult } from "@/types/bots";
 
 const FINAL_STATUS_LABEL: Record<SandboxResult["finalStatus"], string> = {
   finished: "Finalizado",
@@ -87,6 +87,123 @@ export function SandboxChat({ botId, botName }: { botId: string; botName: string
     );
   }
 
+  function renderSandboxPayload(ev: SandboxEvent) {
+    if (!ev.payload) return null;
+
+    if (ev.type === "list" && ev.payload.listMessage) {
+      const listMessage = ev.payload.listMessage as {
+        title: string;
+        footerText?: string;
+        buttonText: string;
+        sections: Array<{
+          title: string;
+          rows: Array<{ rowId: string; title: string; description?: string }>;
+        }>;
+      };
+      return (
+        <div className="rounded-xl border border-border bg-background/80 p-3 text-xs text-muted-foreground">
+          <div className="mb-2 border-b border-border pb-2">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+              Lista interativa
+            </p>
+            <p className="mt-1 text-sm font-semibold text-foreground">{listMessage.title}</p>
+            {listMessage.footerText ? (
+              <p className="text-[11px] text-muted-foreground">{listMessage.footerText}</p>
+            ) : null}
+          </div>
+          <div className="space-y-3">
+            {listMessage.sections.map((section, si) => (
+              <div key={si} className="rounded-lg border border-border bg-slate-950/5 p-3">
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                  {section.title}
+                </p>
+                <div className="space-y-2">
+                  {section.rows.map((row) => (
+                    <div key={row.rowId} className="rounded-lg bg-background px-3 py-2">
+                      <p className="font-medium text-sm text-foreground">{row.title}</p>
+                      {row.description ? (
+                        <p className="text-[11px] text-muted-foreground">{row.description}</p>
+                      ) : null}
+                      <p className="mt-1 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+                        rowId: {row.rowId}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="mt-3 text-[11px] text-muted-foreground">Botão: {listMessage.buttonText}</p>
+        </div>
+      );
+    }
+
+    if (ev.type === "buttons" && ev.payload.buttonsMessage) {
+      const buttonsMessage = ev.payload.buttonsMessage as {
+        title: string;
+        footer?: string;
+        buttons: Array<{ type: string; id?: string; displayText?: string }>;
+      };
+      return (
+        <div className="rounded-xl border border-border bg-background/80 p-3 text-xs text-muted-foreground">
+          <div className="mb-2 border-b border-border pb-2">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+              Botões interativos
+            </p>
+            <p className="mt-1 text-sm font-semibold text-foreground">{buttonsMessage.title}</p>
+            {buttonsMessage.footer ? (
+              <p className="text-[11px] text-muted-foreground">{buttonsMessage.footer}</p>
+            ) : null}
+          </div>
+          <div className="grid gap-2">
+            {buttonsMessage.buttons.map((button, idx) => (
+              <div
+                key={idx}
+                className="rounded-lg border border-border bg-slate-950/5 px-3 py-2 text-sm"
+              >
+                <p className="font-medium text-foreground">{button.displayText ?? ""}</p>
+                {button.id ? <p className="text-[10px] text-muted-foreground">id: {button.id}</p> : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    if (ev.type === "media") {
+      const mediaPayload = ev.payload.mediaMessage ?? ev.payload.audioMessage;
+      if (mediaPayload) {
+        const media = mediaPayload as {
+          mediatype?: string;
+          media?: string;
+          sticker?: string;
+          audio?: string;
+          caption?: string;
+          fileName?: string;
+        };
+        return (
+          <div className="rounded-xl border border-border bg-background/80 p-3 text-xs text-muted-foreground">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+              Mídia
+            </p>
+            <div className="mt-2 space-y-2 text-sm text-foreground">
+              <p className="font-medium">Tipo: {media.mediatype ?? (media.sticker ? "sticker" : "audio")}</p>
+              <p>URL: {media.media ?? media.sticker ?? media.audio ?? ""}</p>
+              {media.caption ? <p>Caption: {media.caption}</p> : null}
+              {media.fileName ? <p>Filename: {media.fileName}</p> : null}
+            </div>
+          </div>
+        );
+      }
+    }
+
+    return (
+      <pre className="mt-2 overflow-x-auto rounded-lg bg-slate-950/10 p-2 text-[11px] text-muted-foreground">
+        {JSON.stringify(ev.payload, null, 2)}
+      </pre>
+    );
+  }
+
   return (
     <div className="flex h-full min-h-[28rem] flex-col rounded-xl border bg-card">
       {/* Header */}
@@ -138,7 +255,10 @@ export function SandboxChat({ botId, botName }: { botId: string; botName: string
               <p className="mb-0.5 text-[10px] font-medium uppercase tracking-wide opacity-70">
                 {ev.direction === "bot" ? "Bot" : "Você"}
               </p>
-              <p className="whitespace-pre-wrap break-words">{ev.text ?? ev.type}</p>
+              <div className="space-y-2">
+                <p className="whitespace-pre-wrap break-words">{ev.text ?? ev.type}</p>
+                {ev.payload && renderSandboxPayload(ev)}
+              </div>
             </div>
           </div>
         ))}
