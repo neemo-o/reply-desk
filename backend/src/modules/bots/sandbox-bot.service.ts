@@ -29,7 +29,7 @@ export interface TestBotDto {
 
 export interface SandboxResult {
   events: SandboxEvent[];
-  finalStatus: 'finished' | 'routed' | 'waiting' | 'error' | 'offline';
+  finalStatus: 'finished' | 'routed' | 'waiting' | 'error' | 'offline' | 'cooldown';
   /// steps visitados (para diagnóstico).
   visitedSteps: number[];
 }
@@ -59,23 +59,59 @@ export class SandboxBotService {
     const events: SandboxEvent[] = [];
     const visitedSteps: number[] = [];
     const now = () => new Date().toISOString();
+    const userMsgs = dto.userMessages ?? [];
 
     const firstStep = bot.steps[0];
     if (!firstStep) {
       return { events, finalStatus: 'error', visitedSteps };
     }
 
-    // ─── SIMPLE: só emite step 1 e finaliza ───────────────────────
+    // ─── SIMPLE: 1ª mensagem do usuário dispara o step 1 (1x por sessão).
+    // Mensagens seguintes ficam em cooldown — o bot NÃO responde, igual ao
+    // bot-engine em produção (12h por contato). Aqui no sandbox só sinalizamos
+    // o estado 'cooldown', sem simular a passagem das 12h. O balão do usuário
+    // continua sendo emitido para o usuário poder confirmar o silêncio do bot.
     if (bot.type === 'SIMPLE') {
-      const validated = validateStepContent(firstStep.tipoMensagem, firstStep.conteudo as Record<string, unknown>);
-      this.emitStep(events, validated, firstStep.tipoMensagem, now());
-      visitedSteps.push(firstStep.ordem);
-      return { events, finalStatus: 'finished', visitedSteps };
+      const validated = validateStepContent(
+        firstStep.tipoMensagem,
+        firstStep.conteudo as Record<string, unknown>,
+      );
+
+      let responded = false;
+      let finalStatus: SandboxResult['finalStatus'] = 'finished';
+
+      for (const userMsg of userMsgs) {
+        events.push({
+          direction: 'user',
+          type: 'text',
+          text: userMsg,
+          timestamp: now(),
+        });
+
+        if (!responded) {
+          // 1ª interação: bot envia o step 1 e finaliza a "sessão".
+          this.emitStep(events, validated, firstStep.tipoMensagem, now());
+          visitedSteps.push(firstStep.ordem);
+          responded = true;
+          finalStatus = 'finished';
+        } else {
+          // Em cooldown: bot em silêncio (na vida real, respeita 12h).
+          finalStatus = 'cooldown';
+        }
+      }
+
+      // Sem mensagem do usuário → bot só emite o step inicial (preview).
+      if (!responded) {
+        this.emitStep(events, validated, firstStep.tipoMensagem, now());
+        visitedSteps.push(firstStep.ordem);
+        finalStatus = 'finished';
+      }
+
+      return { events, finalStatus, visitedSteps };
     }
 
     // ─── AGENTS ───────────────────────────────────────────────────
     const startMessage = dto.startMessage ?? '';
-    const userMsgs = dto.userMessages ?? [];
 
     // 1. Avalia trigger.
     const triggerHit = this.matchTrigger(bot.triggers, startMessage);
@@ -108,11 +144,18 @@ export class SandboxBotService {
     );
     visited.push(currentStep.ordem);
 
+    // Estado do fluxo: 'active' (ainda responde), 'finished', 'routed' ou 'error'.
+    let fluxStatus: 'active' | 'finished' | 'routed' | 'error' = 'active';
+    const stepConds =
+      (currentStep.condicoesProximo as unknown as { match: string }[] | null) ?? [];
     if (currentStep.tipoMensagem === 'handoff') {
-      return { events, finalStatus: 'routed', visitedSteps: visited };
+      fluxStatus = 'routed';
+    } else if (stepConds.length === 0) {
+      fluxStatus = 'finished';
     }
 
-    // 3. Itera sobre userMessages.
+    // 3. Itera sobre userMessages — sempre emite o balão do usuário; só
+    // responde se o fluxo ainda estiver 'active'.
     for (const userMsg of userMsgs) {
       events.push({
         direction: 'user',
@@ -120,15 +163,20 @@ export class SandboxBotService {
         text: userMsg,
         timestamp: now(),
       });
+
+      if (fluxStatus !== 'active') continue; // sessão acabou: bot em silêncio.
+
       const next = this.decideNext(currentStep, userMsg);
       if (next === 'fallback') {
         const fallbackOrder = currentStep.fallbackStepOrder ?? null;
         if (fallbackOrder === null) {
-          return { events, finalStatus: 'finished', visitedSteps: visited };
+          fluxStatus = 'finished';
+          continue;
         }
         const fbStep = bot.steps.find((s) => s.ordem === fallbackOrder);
         if (!fbStep) {
-          return { events, finalStatus: 'error', visitedSteps: visited };
+          fluxStatus = 'error';
+          continue;
         }
         currentStep = fbStep;
         this.emitStep(
@@ -139,16 +187,22 @@ export class SandboxBotService {
         );
         visited.push(currentStep.ordem);
         if (currentStep.tipoMensagem === 'handoff') {
-          return { events, finalStatus: 'routed', visitedSteps: visited };
+          fluxStatus = 'routed';
+          continue;
         }
+        const conds =
+          (currentStep.condicoesProximo as unknown as { match: string }[] | null) ?? [];
+        if (conds.length === 0) fluxStatus = 'finished';
         continue;
       }
       if (next === null) {
-        return { events, finalStatus: 'finished', visitedSteps: visited };
+        fluxStatus = 'finished';
+        continue;
       }
       const nextStep = bot.steps.find((s) => s.ordem === next);
       if (!nextStep) {
-        return { events, finalStatus: 'error', visitedSteps: visited };
+        fluxStatus = 'error';
+        continue;
       }
       currentStep = nextStep;
       this.emitStep(
@@ -159,19 +213,18 @@ export class SandboxBotService {
       );
       visited.push(currentStep.ordem);
       if (currentStep.tipoMensagem === 'handoff') {
-        return { events, finalStatus: 'routed', visitedSteps: visited };
+        fluxStatus = 'routed';
+        continue;
       }
+      const conds =
+        (currentStep.condicoesProximo as unknown as { match: string }[] | null) ?? [];
+      if (conds.length === 0) fluxStatus = 'finished';
     }
 
-    // 4. Estado final — tratamos HANDOFF já acima; reste está em wait/finish.
-    const condicoes =
-      (currentStep.condicoesProximo as unknown as { match: string }[] | null) ?? [];
-    return {
-      events,
-      finalStatus:
-        visited.length > 0 && condicoes.length > 0 ? 'waiting' : 'finished',
-      visitedSteps: visited,
-    };
+    // 'active' ao final do loop = o fluxo ainda espera a próxima resposta.
+    const finalStatus: SandboxResult['finalStatus'] =
+      fluxStatus === 'active' ? 'waiting' : fluxStatus;
+    return { events, finalStatus, visitedSteps: visited };
   }
 
   private matchTrigger(

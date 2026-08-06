@@ -13,6 +13,7 @@ const FINAL_STATUS_LABEL: Record<SandboxResult["finalStatus"], string> = {
   waiting: "Aguardando resposta",
   error: "Erro",
   offline: "Fora do horário",
+  cooldown: "Em cooldown (12h)",
 };
 
 const FINAL_STATUS_BADGE: Record<
@@ -24,6 +25,7 @@ const FINAL_STATUS_BADGE: Record<
   waiting: "secondary",
   error: "destructive",
   offline: "outline",
+  cooldown: "secondary",
 };
 
 /**
@@ -33,6 +35,12 @@ const FINAL_STATUS_BADGE: Record<
  * endpoint batch `/bots/:id/test` com o array acumulado. O backend reexecuta
  * o fluxo do zero e devolve todos os eventos, que são renderizados como
  * balões (bot à esquerda, usuário à direita). Estado final exibido em badge.
+ *
+ * Comportamento pós-finalização: o input NÃO é travado quando a sessão do
+ * bot acaba (finished/routed/cooldown). O usuário pode continuar enviando
+ * mensagens simuladas para confirmar o silêncio do bot — o backend emite o
+ * balão do usuário sem resposta do bot (cooldown de 12h no SIMPLE; sessão
+ * encerrada no AGENTS).
  *
  * Observação: por ser batch, os balões do bot são re-renderizados a cada
  * envio (reexecução do fluxo). Não há persistência de sessão no backend.
@@ -57,9 +65,9 @@ export function SandboxChat({ botId, botName }: { botId: string; botName: string
   }, [result?.events.length, testBot.isPending]);
 
   const events = result?.events ?? [];
-  const isDone =
-    result?.finalStatus === "finished" || result?.finalStatus === "routed";
-  const disabled = testBot.isPending || isDone;
+  // O input nunca fica travado pelo status final — o usuário pode continuar
+  // enviando mensagens para confirmar se o bot responde ou entra em cooldown.
+  const disabled = testBot.isPending;
 
   function reset() {
     setUserMessages([]);
@@ -145,6 +153,20 @@ export function SandboxChat({ botId, botName }: { botId: string; botName: string
             </div>
           </div>
         )}
+        {/* Nota de silêncio: usuário enviou mas o bot não respondeu (cooldown / fim de sessão). */}
+        {result &&
+          !testBot.isPending &&
+          events.length > 0 &&
+          events[events.length - 1].direction === "user" &&
+          (result.finalStatus === "cooldown" ||
+            result.finalStatus === "finished" ||
+            result.finalStatus === "routed") && (
+            <p className="px-1 text-center text-xs text-muted-foreground/80">
+              {result.finalStatus === "cooldown"
+                ? "Bot em cooldown de 12h — não responderá até o prazo esgotar."
+                : "Sessão do bot encerrada — ele não responderá a novas mensagens."}
+            </p>
+          )}
       </div>
 
       {/* Status final */}
@@ -170,7 +192,11 @@ export function SandboxChat({ botId, botName }: { botId: string; botName: string
               sendNext();
             }
           }}
-          placeholder="Digite a próxima mensagem…"
+          placeholder={
+            result && result.finalStatus !== "waiting"
+              ? "Continuar enviando (bot em silêncio)…"
+              : "Digite a próxima mensagem…"
+          }
           disabled={disabled}
           autoFocus
         />
