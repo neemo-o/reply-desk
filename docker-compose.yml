@@ -107,13 +107,53 @@ services:
   #
   # Porta 8081 externa evita colisão com o frontend (8080) e com a porta
   # interna da Evolution (8080, exposta só para debug).
+  #
+  # ⚠️  Versão 2.4.0-rc2 — FIX crocial do bug "this.isZero is not a function"
+  #     que quebrava envio de mensagens tipo Lista e Buttons (PR upstream #2461:
+  #     "removed destructive JSON cloning that triggered `this.isZero` when
+  #     the message contained Long-typed fields").
+  #
+  #     Pin explícito em :2.4.0-rc2 (NÃO usar :latest). Quando a 2.4.0 stable
+  #     sair, trocar para a tag stable correspondente.
+  #
+  # 🔑 LICENÇA GRATUITA — BREAKING CHANGE da 2.4.0:
+  #     A 2.4.0+ exige ativação de licença "community" (gratuita,Apache-2.0,
+  #     sem cobrança, sem limite de uso) no licensing server da Evolution
+  #     Foundation. Até ativar, todas as rotas de negócio retornam:
+  #
+  #        HTTP 503 { "code": "LICENSE_REQUIRED",
+  #                   "register_url": "http://<host>:8081/manager/login" }
+  #
+  #     Rotas públicas (p/ recuperar): /license/status, /license/register,
+  #     /license/activate, /manager/**, /health, /server/ok, /ws.
+  #
+  #     ATIVAÇÃO (uma única vez, persiste no banco RuntimeConfig):
+  #
+  #     1. Suba o serviço:  docker compose up -d evolution-api
+  #     2. Abra no browser: http://localhost:8081/manager/login
+  #     3. Você será redirecionado p/ o licensing server da Evolution Foundation
+  #        → preencha nome/e-mail/telefone (coleta agregada, sem conteúdo de msg)
+  #     4. Callback automático volta p/ /manager/license/callback?code=...
+  #     5. Pronto. Reinícios futuros não consultam o licensing server
+  #        (apenas heartbeat de telemetria a cada 30 min).
+  #
+  #     Ativação headless (opcional): setar EVOLUTION_OPERATOR_EMAIL com um
+  #     e-mail JÁ registrado antes no licensing server — ativa no boot sem
+  #     browser. Cai pro fluxo de UI se o e-mail não for reconhecido.
+  #
+  #     Docs: https://docs.evolutionfoundation.com.br/licensing
+  #
   evolution-api:
-    image: evoapicloud/evolution-api:latest
+    image: evoapicloud/evolution-api:2.4.0-rc2
     restart: unless-stopped
     environment:
           # Auth global — todas as chamadas externas ao backend (api) precisam
           # deste token, enviado via header `apikey`. Backend lê via
           # EVOLUTION_API_KEY.
+          # NOTA 2.4.0: este mesmo token passa a funcionar também como chave
+          # de bootstrap de licença. Se o valor for uma key real emitida pelo
+          # licensing server, ativação silenciosa no boot. Caso contrário,
+          # serviço sobe "unlicensed" e aguarda ativação via /manager.
           AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:-replydesk-evolution-token-change-me}
           # Expor instâncias na listagem (fetchInstances) — útil para debug.
           AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES: "true"
