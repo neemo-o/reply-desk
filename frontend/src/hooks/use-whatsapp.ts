@@ -63,10 +63,15 @@ export function useCreateWhatsappSession() {
 
 export function useReconnectSession() {
   const queryClient = useQueryClient();
+  const { tenant } = useAuth();
   return useMutation({
     mutationFn: (id: string) => whatsappService.reconnect(id),
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
       queryClient.invalidateQueries({ queryKey: ["whatsapp"] });
+      // FIX 6 — Invalida o cache do QR específico da sessão para que o
+      // useSessionQr não continue servindo dados stale (ex: qr_expired)
+      // enquanto o status já voltou para qrcode_pending no backend.
+      queryClient.invalidateQueries({ queryKey: ["whatsapp", tenant?.id, "session-qr", id] });
       toast.success("Reconexão iniciada — QR Code disponível.");
     },
     onError: (err) => {
@@ -86,10 +91,15 @@ export function useReconnectSession() {
  */
 export function useLogoutSession() {
   const queryClient = useQueryClient();
+  const { tenant } = useAuth();
   return useMutation({
     mutationFn: (id: string) => whatsappService.logout(id),
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
       queryClient.invalidateQueries({ queryKey: ["whatsapp"] });
+      // FIX 6 — Invalida o cache do QR para parar o polling imediatamente
+      // após desconectar. Sem isso, o useSessionQr continuava pollando
+      // mesmo com status=disconnected, gerando chamadas desnecessárias.
+      queryClient.invalidateQueries({ queryKey: ["whatsapp", tenant?.id, "session-qr", id] });
       toast.success("Desconectado. Clique em \"Reconectar\" para gerar um QR Code novo.");
     },
     onError: (err) => {

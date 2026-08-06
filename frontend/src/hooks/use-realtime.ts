@@ -11,7 +11,11 @@ import { realtimeClient } from "@/lib/realtime-client";
  * Use junto com TanStack Query (refetchInterval fallback) para robustez.
  */
 export function useRealtimeEvent<T = unknown>(
-  event: "instance.status" | "broadcast.progress" | "bot.session",
+  event:
+    | "instance.status"
+    | "broadcast.progress"
+    | "bot.session"
+    | "bot.sessionCount",
   handler: (payload: T) => void,
 ) {
   const { isAuthenticated, tenant } = useAuth();

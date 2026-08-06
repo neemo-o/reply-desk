@@ -100,10 +100,14 @@ export function useUpsertContact() {
  */
 export function useConnectSession() {
   const queryClient = useQueryClient();
+  const { tenant } = useAuth();
   return useMutation({
     mutationFn: (sessionId: string) => sessionConnectService.connect(sessionId),
-    onSuccess: () => {
+    onSuccess: (_data, sessionId) => {
       queryClient.invalidateQueries({ queryKey: ["whatsapp"] });
+      // FIX 6 — Invalida o cache do QR ao iniciar conexão para que o
+      // useSessionQr comece o polling do zero (sem servir cache stale).
+      queryClient.invalidateQueries({ queryKey: ["whatsapp", tenant?.id, "session-qr", sessionId] });
       toast.success("Conectando — QR Code disponível.");
     },
     onError: (err) => {

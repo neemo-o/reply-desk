@@ -69,29 +69,77 @@ export class BotsService {
     });
   }
 
-  findAll(tenantId: string) {
-    return this.prisma.bot.findMany({
-      where: { tenantId },
-      orderBy: { updatedAt: 'desc' },
-      select: {
-        id: true,
-        name: true,
-        description: true,
-        type: true,
-        status: true,
-        testContactPhone: true,
-        offlineMessage: true,
-        updatedAt: true,
-        createdAt: true,
-        triggers: { select: { id: true, tipo: true, valor: true } },
-        _count: {
-          select: {
-            sessions: { where: { status: 'connected' } },
-            broadcasts: true,
+  /**
+   * 🔒 Bug 5 — Retorna a lista de bots do tenant, incluindo o número de
+   * sessões Whatss conectadas ativas para cada um (`_count.sessions`).
+   *
+   * A contagem é mantida consistente com o emitido via WS `bot.sessionCount`
+   * (ver `WhatsappSessionsService.emitBotSessionCount`). Anteriormente o
+   * select usava a relation `Bot.sessions` (→ BotSession[]) com filtro
+   * `status: 'connected'`, mas `BotSession.status` nunca é 'connected'
+   * (valores: active/finished/routed/cooldown), fazendo a contagem ser
+   * sempre 0.
+   */
+  async findAll(tenantId: string) {
+    const [bots, counts] = await Promise.all([
+      this.prisma.bot.findMany({
+        where: { tenantId },
+        orderBy: { updatedAt: 'desc' },
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          type: true,
+          status: true,
+          testContactPhone: true,
+          offlineMessage: true,
+          updatedAt: true,
+          createdAt: true,
+          triggers: { select: { id: true, tipo: true, valor: true } },
+          _count: {
+            select: {
+              broadcasts: true,
+            },
           },
         },
+      }),
+      this.countActiveSessionsByBot(tenantId),
+    ]);
+
+    return bots.map((b) => ({
+      ...b,
+      _count: {
+        ...b._count,
+        // Sessões WhatsApp conectadas que têm este bot como activeBot.
+        sessions: counts.get(b.id) ?? 0,
+      },
+    }));
+  }
+
+  /**
+   * 🔒 Bug 5 — Conta quantas Whats sessions conectadas estão usando cada bot
+   * (via SessionSettings.activeBotId), retornando um map `botId -> count`.
+   * Consistente com o que é emitido via `bot.sessionCount` no Realtime.
+   */
+  private async countActiveSessionsByBot(
+    tenantId: string,
+  ): Promise<Map<string, number>> {
+    const rows = await this.prisma.sessionSettings.findMany({
+      where: {
+        session: { tenantId, status: 'connected' },
+        activeBotId: { not: null },
+      },
+      select: {
+        activeBotId: true,
+        session: { select: { id: true } },
       },
     });
+    const map = new Map<string, number>();
+    for (const r of rows) {
+      if (!r.activeBotId) continue;
+      map.set(r.activeBotId, (map.get(r.activeBotId) ?? 0) + 1);
+    }
+    return map;
   }
 
   async findOne(tenantId: string, id: string) {

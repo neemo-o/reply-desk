@@ -27,6 +27,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useBots, useCreateBot, useDeleteBot } from "@/hooks/use-bots";
+import { useBotSessionCountRealtime } from "@/hooks/use-bot-session-count-realtime";
 import { useSubscription } from "@/hooks/use-subscription";
 import { cn } from "@/lib/utils";
 import type { BotType, Bot as APIBot } from "@/types/bots";
@@ -78,6 +79,10 @@ export function BotsPage() {
   const [type, setType] = useState<BotType>(TYPE_DEFAULTS);
   const [description, setDescription] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+
+  // 🔒 Bug 5 — Atualiza em tempo real o número de sessões ativas por bot
+  // quando o backend emite `bot.sessionCount` (conexão/desconexão WA).
+  useBotSessionCountRealtime();
 
   const grouped = useMemo(() => {
     const map: Record<BotType, APIBot[]> = { SIMPLE: [], AGENTS: [], AUTO: [] };

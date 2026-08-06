@@ -120,10 +120,13 @@ export class EvolutionWebhooksService {
       case 'APPLICATION_STARTUP':
         // A Evolution reiniciou e a instância subiu — basta atualizar
         // lastSeen. Status de conexão virá em CONNECTION_UPDATE separado.
+        // FIX 3 — Usa o status real da sessão no log (antes fixava
+        // 'qrcode_pending', o que poluía o histórico de sessões já conectadas
+        // e poderia causar transições de status incorretas em timing adverso).
         await this.sessionsService.updateStatus(session.id, session.status, {
           lastSeen: new Date(),
         });
-        await this.sessionsService.logEvent(session.id, session.tenantId, 'qrcode_pending', {
+        await this.sessionsService.logEvent(session.id, session.tenantId, session.status, {
           message: 'Instância reiniciada na Evolution (APPLICATION_STARTUP)',
         });
         break;

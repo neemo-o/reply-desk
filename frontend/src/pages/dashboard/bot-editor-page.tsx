@@ -514,6 +514,7 @@ function StepsPanel({
                   }
                   onDelete={() => deleteStep.mutate({ botId, stepId: s.id })}
                   allowHandoff={isAgents}
+                  isAgents={isAgents}
                 />
               </li>
             ))}
@@ -581,6 +582,7 @@ function StepRow({
   onToggleEdit,
   onDelete,
   allowHandoff,
+  isAgents,
 }: {
   botId: string;
   step: BotStep;
@@ -588,6 +590,7 @@ function StepRow({
   onToggleEdit: () => void;
   onDelete: () => void;
   allowHandoff: boolean;
+  isAgents: boolean;
 }) {
   const updateStep = useUpdateStep();
 
@@ -670,91 +673,96 @@ function StepRow({
             allowHandoff={allowHandoff}
           />
 
-          {/* Condições de próximo (AGENTS) */}
-          <div className="space-y-1.5">
-            <Label className="text-xs">Condições de próximo step</Label>
-            {draftCond.length === 0 ? (
-              <p className="text-xs text-muted-foreground">
-                Sem condições — o próximo step (por ordem) é executado. Handoff finaliza.
-              </p>
-            ) : (
-              <ul className="space-y-1.5">
-                {draftCond.map((c, i) => (
-                  <li key={i} className="flex items-center gap-2">
-                    <Input
-                      value={c.match}
-                      onChange={(e) => {
-                        const next = [...draftCond];
-                        next[i] = { ...next[i], match: e.target.value };
-                        setDraftCond(next);
-                      }}
-                      placeholder="match"
-                      className="h-7 flex-1"
-                    />
-                    <Input
-                      type="number"
-                      value={c.stepOrder}
-                      onChange={(e) => {
-                        const next = [...draftCond];
-                        next[i] = {
-                          ...next[i],
-                          stepOrder: parseInt(e.target.value, 10) || 1,
-                        };
-                        setDraftCond(next);
-                      }}
-                      placeholder="ordem"
-                      className="h-7 w-20"
-                    />
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-7 w-7 text-destructive"
-                      onClick={() =>
-                        setDraftCond(draftCond.filter((_, j) => j !== i))
-                      }
-                      aria-label="Remover condição"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                setDraftCond([...draftCond, { match: "", stepOrder: 1 }])
-              }
-            >
-              <Plus className="h-3.5 w-3.5" /> Adicionar condição
-            </Button>
-          </div>
+          {/* Condições de próximo e Fallback — apenas bots AGENTS (multi-step). */}
+          {isAgents && (
+            <>
+              {/* Condições de próximo (AGENTS) */}
+              <div className="space-y-1.5">
+                <Label className="text-xs">Condições de próximo step</Label>
+                {draftCond.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    Sem condições — o próximo step (por ordem) é executado. Handoff finaliza.
+                  </p>
+                ) : (
+                  <ul className="space-y-1.5">
+                    {draftCond.map((c, i) => (
+                      <li key={i} className="flex items-center gap-2">
+                        <Input
+                          value={c.match}
+                          onChange={(e) => {
+                            const next = [...draftCond];
+                            next[i] = { ...next[i], match: e.target.value };
+                            setDraftCond(next);
+                          }}
+                          placeholder="match"
+                          className="h-7 flex-1"
+                        />
+                        <Input
+                          type="number"
+                          value={c.stepOrder}
+                          onChange={(e) => {
+                            const next = [...draftCond];
+                            next[i] = {
+                              ...next[i],
+                              stepOrder: parseInt(e.target.value, 10) || 1,
+                            };
+                            setDraftCond(next);
+                          }}
+                          placeholder="ordem"
+                          className="h-7 w-20"
+                        />
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7 text-destructive"
+                          onClick={() =>
+                            setDraftCond(draftCond.filter((_, j) => j !== i))
+                          }
+                          aria-label="Remover condição"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    setDraftCond([...draftCond, { match: "", stepOrder: 1 }])
+                  }
+                >
+                  <Plus className="h-3.5 w-3.5" /> Adicionar condição
+                </Button>
+              </div>
 
-          {/* Fallback */}
-          <div className="space-y-1.5">
-            <Label htmlFor={`fb-${step.id}`} className="text-xs">
-              Fallback (ordem do step, opcional)
-            </Label>
-            <div className="flex items-center gap-2">
-              <Input
-                id={`fb-${step.id}`}
-                type="number"
-                value={draftFallback ?? ""}
-                onChange={(e) =>
-                  setDraftFallback(
-                    e.target.value ? parseInt(e.target.value, 10) || null : null,
-                  )
-                }
-                placeholder="ex: 2"
-                className="h-7 w-28"
-              />
-              <span className="text-xs text-muted-foreground">
-                Step executado quando nenhuma condição bater.
-              </span>
-            </div>
-          </div>
+              {/* Fallback */}
+              <div className="space-y-1.5">
+                <Label htmlFor={`fb-${step.id}`} className="text-xs">
+                  Fallback (ordem do step, opcional)
+                </Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    id={`fb-${step.id}`}
+                    type="number"
+                    value={draftFallback ?? ""}
+                    onChange={(e) =>
+                      setDraftFallback(
+                        e.target.value ? parseInt(e.target.value, 10) || null : null,
+                      )
+                    }
+                    placeholder="ex: 2"
+                    className="h-7 w-28"
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Step executado quando nenhuma condição bater.
+                  </span>
+                </div>
+              </div>
+            </>
+          )}
 
           <div className="flex justify-end gap-2">
             <Button variant="ghost" size="sm" onClick={onToggleEdit}>
