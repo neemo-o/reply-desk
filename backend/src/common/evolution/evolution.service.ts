@@ -381,6 +381,11 @@ export class EvolutionService {
   // ─── Envio de tipos avançados (bot engine + broadcast) ───────────────
   // Todos aceitam `number` (E.164 sem +) e devolvem { key, status }.
 
+  // ─── Mídia (Evolution API v2.3.7 — DTOs SendMediaDto / SendAudioDto / SendStickerDto) ───
+  // Payload FLAT no body (não aninhado sob `mediaMessage`).
+  // `mediatype` é all-lowercase no wire. Tape de mídia aceita: image | video | document | audio.
+  // Sticker usa endpoint separado SendStickerDto (campo `sticker`, sem mediatype).
+  // Áudio (PTT) usa endpoint separado `sendWhatsAppAudio` (campo `audio`, sem mediatype).
   async sendImage(instanceName: string, input: {
     number: string;
     url: string;
@@ -389,12 +394,10 @@ export class EvolutionService {
   }): Promise<{ key?: { id?: string }; status?: string }> {
     return this.call('POST', `/message/sendMedia/${encodeURIComponent(instanceName)}`, {
       number: input.number,
-      options: { delay: input.delayMs ?? 1200 },
-      mediaMessage: {
-        mediatype: 'image',
-        media: input.url,
-        ...(input.caption ? { caption: input.caption } : {}),
-      },
+      mediatype: 'image',
+      media: input.url,
+      ...(input.caption ? { caption: input.caption } : {}),
+      delay: input.delayMs ?? 1200,
     });
   }
 
@@ -406,12 +409,10 @@ export class EvolutionService {
   }): Promise<{ key?: { id?: string }; status?: string }> {
     return this.call('POST', `/message/sendMedia/${encodeURIComponent(instanceName)}`, {
       number: input.number,
-      options: { delay: input.delayMs ?? 1200 },
-      mediaMessage: {
-        mediatype: 'video',
-        media: input.url,
-        ...(input.caption ? { caption: input.caption } : {}),
-      },
+      mediatype: 'video',
+      media: input.url,
+      ...(input.caption ? { caption: input.caption } : {}),
+      delay: input.delayMs ?? 1200,
     });
   }
 
@@ -420,10 +421,11 @@ export class EvolutionService {
     url: string;
     delayMs?: number;
   }): Promise<{ key?: { id?: string }; status?: string }> {
+    // SendAudioDto: { number, audio, delay } — PTT (push-to-talk) no WhatsApp.
     return this.call('POST', `/message/sendWhatsAppAudio/${encodeURIComponent(instanceName)}`, {
       number: input.number,
-      options: { delay: input.delayMs ?? 1200 },
-      audio: { audio: input.url },
+      audio: input.url,
+      delay: input.delayMs ?? 1200,
     });
   }
 
@@ -435,12 +437,10 @@ export class EvolutionService {
   }): Promise<{ key?: { id?: string }; status?: string }> {
     return this.call('POST', `/message/sendMedia/${encodeURIComponent(instanceName)}`, {
       number: input.number,
-      options: { delay: input.delayMs ?? 1200 },
-      mediaMessage: {
-        mediatype: 'document',
-        media: input.url,
-        fileName: input.filename,
-      },
+      mediatype: 'document',
+      media: input.url,
+      fileName: input.filename,
+      delay: input.delayMs ?? 1200,
     });
   }
 
@@ -449,70 +449,87 @@ export class EvolutionService {
     url: string;
     delayMs?: number;
   }): Promise<{ key?: { id?: string }; status?: string }> {
-    return this.call('POST', `/message/sendMedia/${encodeURIComponent(instanceName)}`, {
+    // SendStickerDto: { number, sticker, delay } — endpoint próprio.
+    return this.call('POST', `/message/sendSticker/${encodeURIComponent(instanceName)}`, {
       number: input.number,
-      options: { delay: input.delayMs ?? 1200 },
-      mediaMessage: { mediatype: 'sticker', media: input.url },
+      sticker: input.url,
+      delay: input.delayMs ?? 1200,
     });
   }
 
   /**
    * Lista interativa (WhatsApp). Somente 1 seção suportada (limite Evolution).
    * Cada row precisa { id, title, description? }.
+   * Payload flat conforme SendListDto/`listMessageSchema` da Evolution API v2.3.7
+   * (required: number, title, footerText, buttonText, sections). Em v2.3.7 o DTO
+   * tem também `description?` (subtítulo do proto.ListMessage) — enviamos sempre
+   * como string (default '') para evitar bug do Baileys onde um `description`
+   * undefined faz o `ContextInfo.toObject` quebrar (`this.isZero is not a function`).
+   * Igualmente cada row recebe `description: string` (default '') nunca omitida.
    */
   async sendList(instanceName: string, input: {
     number: string;
     title: string;
+    footerText: string;
     buttonText: string;
-    text: string;
     sections: {
       title: string;
       rows: { id: string; title: string; description?: string }[];
     }[];
     delayMs?: number;
+    /// Subtítulo exibido abaixo do título (campo `description` do proto.ListMessage).
+    /// Recomendado enviar sempre preenchido para evitar o bug do Long no Baileys.
+    description?: string;
   }): Promise<{ key?: { id?: string }; status?: string }> {
+    const description = (input.description ?? '').toString();
     return this.call('POST', `/message/sendList/${encodeURIComponent(instanceName)}`, {
       number: input.number,
-      options: { delay: input.delayMs ?? 1200 },
-      listMessage: {
-        title: input.title,
-        buttonText: input.buttonText,
-        descriptionText: input.text,
-        sectionsText: input.sections.map((s) => ({
-          title: s.title,
-          rows: s.rows.map((r) => ({
-            rowId: r.id,
-            title: r.title,
-            ...(r.description ? { description: r.description } : {}),
-          })),
+      title: input.title,
+      description,
+      footerText: input.footerText,
+      buttonText: input.buttonText,
+      sections: input.sections.map((s) => ({
+        title: s.title,
+        rows: s.rows.map((r) => ({
+          rowId: r.id,
+          title: r.title,
+          description: (r.description ?? '').toString(),
         })),
-      },
+      })),
+      delay: input.delayMs ?? 1200,
     });
   }
 
-  /**
-   * Botões interativos (até 3). Evolution API v2 usa endpoint sendButtons.
-   */
+  // Botões interativos (até 3 reply). Evolution API v2.4.0 —
+  // `buttonsMessageSchema` / SendButtonsDto. Cada botão precisa
+  // { type: 'reply', id, displayText }. `title` é o cabeçalho (bold),
+  // `description` (subtítulo plain text) e `footer` opcionais.
+  // 📌 v2.4.0: botões agora trafegam como `interactiveMessage` + nativeFlow
+  // (não mais `buttonsMessage` legacy). Renderiza em Web/iOS/Android.
   async sendButtons(instanceName: string, input: {
     number: string;
-    text: string;
+    title: string;
+    description?: string;
+    footer?: string;
     buttons: { id: string; title: string }[];
     delayMs?: number;
   }): Promise<{ key?: { id?: string }; status?: string }> {
-    if (input.buttons.length > 3) {
-      throw new BadGatewayException('WhatsApp aceita no máximo 3 botões');
+    if (input.buttons.length === 0 || input.buttons.length > 3) {
+      throw new BadGatewayException('WhatsApp aceita entre 1 e 3 botões');
     }
     return this.call('POST', `/message/sendButtons/${encodeURIComponent(instanceName)}`, {
       number: input.number,
-      options: { delay: input.delayMs ?? 1200 },
-      buttonsMessage: {
-        title: input.text,
-        buttons: input.buttons.map((b, i) => ({
-          type: 'reply',
-          reply: { id: b.id, title: b.title },
-          index: i,
-        })),
-      },
+      title: input.title,
+      ...(input.description ? { description: input.description } : {}),
+      ...(input.footer ? { footer: input.footer } : {}),
+      buttons: input.buttons.map((b) => ({
+        type: 'reply',
+        id: b.id,
+        // `title` do botão é enviado como `displayText` na Evolution v2.4.0
+        // (mapeado internamente pelo `toJSONString` → { display_text, id }).
+        displayText: b.title,
+      })),
+      delay: input.delayMs ?? 1200,
     });
   }
 
@@ -538,6 +555,13 @@ export class EvolutionService {
     });
   }
 
+  // 📌 M24 — Evolution API v2.4.0: schema `contactMessageSchema` mudou para
+  // formato FLAT (sem wrapper `contactMessage` nem `options`). Raiz espera:
+  //   { number, contact: [{ fullName, phoneNumber }], delay }
+  // Em v2.3.7 o formato era `{ contactMessage:{contacts:[{fullName,phones:[...]}]} }`
+  // que agora retorna HTTP 400. Cada contato usa `phoneNumber` (string única),
+  // não mais `phones: [{number, type}]`. Mantemos a assinatura pública estável
+  // (`input.contact = {name, phone}`) e mapeamos internamente pro novo shape.
   async sendContact(instanceName: string, input: {
     number: string;
     contact: { name: string; phone: string };
@@ -545,18 +569,24 @@ export class EvolutionService {
   }): Promise<{ key?: { id?: string }; status?: string }> {
     return this.call('POST', `/message/sendContact/${encodeURIComponent(instanceName)}`, {
       number: input.number,
-      options: { delay: input.delayMs ?? 1200 },
-      contactMessage: {
-        contacts: [
-          {
-            fullName: input.contact.name,
-            phones: [{ number: input.contact.phone, type: 'mobile' }],
-          },
-        ],
-      },
+      contact: [
+        {
+          fullName: input.contact.name,
+          phoneNumber: input.contact.phone,
+        },
+      ],
+      delay: input.delayMs ?? 1200,
     });
   }
 
+  // 📌 M24 — Evolution API v2.4.0: schema `pollMessageSchema` mudou para
+  // formato FLAT (sem wrapper `pollMessage` nem `options`). Raiz espera:
+  //   { number, name, values: string[], selectableCount, delay }
+  // Em v2.3.7 o formato era `{ pollMessage:{name, values, selectableCount} }`
+  // que agora retorna HTTP 400 com `instance requires property "values"` —
+  // o validador v2.4.0 não olha dentro de `pollMessage`. Mantemos a assinatura
+  // pública (`input.options` em vez de `values` p/ não confundir com other
+  // options do DTO) e mapeamos internamente.
   async sendPoll(instanceName: string, input: {
     number: string;
     name: string;
@@ -566,12 +596,10 @@ export class EvolutionService {
   }): Promise<{ key?: { id?: string }; status?: string }> {
     return this.call('POST', `/message/sendPoll/${encodeURIComponent(instanceName)}`, {
       number: input.number,
-      options: { delay: input.delayMs ?? 1200 },
-      pollMessage: {
-        name: input.name,
-        values: input.options,
-        selectableCount: input.selectableCount ?? 1,
-      },
+      name: input.name,
+      values: input.options,
+      selectableCount: input.selectableCount ?? 1,
+      delay: input.delayMs ?? 1200,
     });
   }
 
