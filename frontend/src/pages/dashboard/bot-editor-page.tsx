@@ -4,9 +4,6 @@ import {
   ArrowLeft,
   Plus,
   Trash2,
-  Play,
-  Send,
-  RotateCcw,
   Save,
   Edit2,
   X,
@@ -30,15 +27,12 @@ import {
   useUpdateTrigger,
   useDeleteTrigger,
   useUpdateBot,
-  useTestBot,
 } from "@/hooks/use-bots";
 import { useTenantSummary } from "@/hooks/use-tenant";
-import { cn } from "@/lib/utils";
 import type {
   BotStatus,
   BotStep,
   BotStepCondition,
-  SandboxResult,
   StepMessageType,
 } from "@/types/bots";
 
@@ -57,25 +51,6 @@ const STATUS_BADGE: Record<BotStatus, "secondary" | "warning" | "success" | "out
 };
 
 const STATUS_NEXT: BotStatus[] = ["draft", "testing", "active", "inactive"];
-
-const FINAL_STATUS_LABEL: Record<SandboxResult["finalStatus"], string> = {
-  finished: "Finalizado",
-  routed: "Encaminhado (handoff)",
-  waiting: "Aguardando resposta",
-  error: "Erro",
-  offline: "Fora do horário",
-};
-
-const FINAL_STATUS_BADGE: Record<
-  SandboxResult["finalStatus"],
-  "success" | "warning" | "secondary" | "destructive" | "outline"
-> = {
-  finished: "success",
-  routed: "warning",
-  waiting: "secondary",
-  error: "destructive",
-  offline: "outline",
-};
 
 export function BotEditorPage() {
   const { id } = useParams() as { id: string };
@@ -145,13 +120,10 @@ export function BotEditorPage() {
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
-        <div className="space-y-6">
-          <ConfigPanel botId={bot.id} bot={bot} />
-          {isAgents && <TriggersPanel botId={bot.id} triggers={bot.triggers ?? []} />}
-          <StepsPanel botId={bot.id} steps={bot.steps ?? []} isAgents={isAgents} />
-        </div>
-        <SandboxPanel botId={bot.id} />
+      <div className="space-y-6">
+        <ConfigPanel botId={bot.id} bot={bot} />
+        {isAgents && <TriggersPanel botId={bot.id} triggers={bot.triggers ?? []} />}
+        <StepsPanel botId={bot.id} steps={bot.steps ?? []} isAgents={isAgents} />
       </div>
     </DashboardLayout>
   );
@@ -778,129 +750,3 @@ function StepRow({
   );
 }
 
-// ─── Sandbox interativa ──────────────────────────────────────────────
-
-function SandboxPanel({ botId }: { botId: string }) {
-  const testBot = useTestBot();
-  const [open, setOpen] = useState(false);
-  const [input, setInput] = useState("");
-  const [history, setHistory] = useState<string[]>([]);
-  const [result, setResult] = useState<SandboxResult | null>(null);
-
-  function start() {
-    setHistory([]);
-    setResult(null);
-    setOpen(true);
-  }
-
-  function sendNext() {
-    if (!input.trim()) return;
-    const next = [...history, input.trim()];
-    setHistory(next);
-    setInput("");
-    testBot.mutate(
-      { id: botId, payload: { userMessages: next } },
-      { onSuccess: (r) => setResult(r) },
-    );
-  }
-
-  const events = result?.events ?? [];
-  const visited = result?.visitedSteps ?? [];
-
-  return (
-    <Card className="flex min-h-[24rem] flex-col">
-      <CardContent className="flex-1 space-y-3 p-5">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold">Sandbox</h3>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={start}
-            disabled={testBot.isPending}
-          >
-            <Play className="h-4 w-4" />
-            {history.length === 0 ? "Iniciar" : "Reiniciar"}
-          </Button>
-        </div>
-
-        {!open ? (
-          <p className="text-xs text-muted-foreground">
-            Simule uma interação com o bot. Cada envio acrescenta à conversa.
-          </p>
-        ) : (
-          <>
-            <div className="max-h-[20rem] space-y-1.5 overflow-y-auto rounded-md border bg-background p-2">
-              {events.length === 0 ? (
-                <p className="p-2 text-xs text-muted-foreground">
-                  Aguardando resposta…
-                </p>
-              ) : (
-                events.map((ev, i) => (
-                  <div
-                    key={i}
-                    className={cn(
-                      "max-w-[85%] rounded-xl px-3 py-2 text-sm",
-                      ev.direction === "user"
-                        ? "ml-auto bg-primary text-primary-foreground rounded-br-sm"
-                        : "mr-auto bg-secondary text-secondary-foreground rounded-bl-sm",
-                    )}
-                  >
-                    <p className="text-[10px] opacity-70">
-                      {ev.direction === "bot" ? "Bot" : "Você"}
-                    </p>
-                    <p>{ev.text ?? ev.type}</p>
-                  </div>
-                ))
-              )}
-            </div>
-
-            {result && (
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant={FINAL_STATUS_BADGE[result.finalStatus]}>
-                  {FINAL_STATUS_LABEL[result.finalStatus]}
-                </Badge>
-                <span className="text-xs text-muted-foreground">
-                  steps visitados: {visited.join(", ") || "—"}
-                </span>
-              </div>
-            )}
-
-            <div className="flex items-center gap-2">
-              <Input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    sendNext();
-                  }
-                }}
-                placeholder="Digite a próxima mensagem…"
-                disabled={
-                  testBot.isPending || result?.finalStatus === "finished" ||
-                  result?.finalStatus === "routed"
-                }
-              />
-              <Button
-                size="icon"
-                onClick={sendNext}
-                disabled={
-                  testBot.isPending || !input.trim() ||
-                  result?.finalStatus === "finished" ||
-                  result?.finalStatus === "routed"
-                }
-                aria-label="Enviar"
-              >
-                {testBot.isPending ? (
-                  <RotateCcw className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Send className="h-4 w-4" />
-                )}
-              </Button>
-            </div>
-          </>
-        )}
-      </CardContent>
-    </Card>
-  );
-}

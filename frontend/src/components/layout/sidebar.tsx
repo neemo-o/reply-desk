@@ -17,6 +17,7 @@ import {
   Smartphone,
   Bot,
   Contact,
+  FlaskConical,
 } from "lucide-react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Logo } from "@/components/layout/logo";
@@ -52,6 +53,7 @@ const ATTENDANCE_ITEMS = [
 const AUTOMATION_ITEMS = [
   { to: "/dashboard/bots", label: "Bots", icon: Bot, end: false },
   { to: "/dashboard/contact-lists", label: "Contatos", icon: Contact, end: false },
+  { to: "/dashboard/sandbox", label: "Sandbox", icon: FlaskConical, end: false },
 ] as const;
 
 const MANAGEMENT_ITEMS = [

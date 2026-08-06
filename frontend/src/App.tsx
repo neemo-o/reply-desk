@@ -14,6 +14,7 @@ import { MembersPage } from "@/pages/dashboard/members-page";
 import { WhatsappPage } from "@/pages/dashboard/whatsapp-page";
 import { BotsPage } from "@/pages/dashboard/bots-page";
 import { BotEditorPage } from "@/pages/dashboard/bot-editor-page";
+import { SandboxPage } from "@/pages/dashboard/sandbox-page";
 import { BroadcastEditorPage } from "@/pages/dashboard/broadcast-editor-page";
 import { ContactListsPage } from "@/pages/dashboard/contact-lists-page";
 import { ContactListDetailPage } from "@/pages/dashboard/contact-list-detail-page";
@@ -39,6 +40,7 @@ export default function App() {
           <Route path="/dashboard/whatsapp" element={<WhatsappPage />} />
           <Route path="/dashboard/bots" element={<BotsPage />} />
           <Route path="/dashboard/bots/:id" element={<BotEditorPage />} />
+          <Route path="/dashboard/sandbox" element={<SandboxPage />} />
           <Route path="/dashboard/broadcasts/:id" element={<BroadcastEditorPage />} />
           <Route path="/dashboard/contact-lists" element={<ContactListsPage />} />
           <Route path="/dashboard/contact-lists/:id" element={<ContactListDetailPage />} />
