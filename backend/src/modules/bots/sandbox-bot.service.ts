@@ -1,6 +1,6 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
-import { PrismaService } from '../../common/prisma/prisma.service';
+import { Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
+import { PrismaService } from "../../common/prisma/prisma.service";
 import {
   ValidatedStepContent,
   TextContent,
@@ -9,11 +9,11 @@ import {
   MediaContent,
   HandoffContent,
   validateStepContent,
-} from './broadcast/step-content.validator';
-import { isUuid } from '../../common/utils/security';
+} from "./broadcast/step-content.validator";
+import { isUuid } from "../../common/utils/security";
 
 export interface SandboxEvent {
-  direction: 'bot' | 'user';
+  direction: "bot" | "user";
   type: string;
   text?: string;
   selectedId?: string;
@@ -30,7 +30,13 @@ export interface TestBotDto {
 
 export interface SandboxResult {
   events: SandboxEvent[];
-  finalStatus: 'finished' | 'routed' | 'waiting' | 'error' | 'offline' | 'cooldown';
+  finalStatus:
+    | "finished"
+    | "routed"
+    | "waiting"
+    | "error"
+    | "offline"
+    | "cooldown";
   /// steps visitados (para diagnóstico).
   visitedSteps: number[];
 }
@@ -46,16 +52,20 @@ export class SandboxBotService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async test(tenantId: string, botId: string, dto: TestBotDto): Promise<SandboxResult> {
-    if (!isUuid(botId)) throw new NotFoundException('Bot não encontrado');
+  async test(
+    tenantId: string,
+    botId: string,
+    dto: TestBotDto,
+  ): Promise<SandboxResult> {
+    if (!isUuid(botId)) throw new NotFoundException("Bot não encontrado");
     const bot = await this.prisma.bot.findFirst({
-      where: { id: botId, tenantId, type: { in: ['SIMPLE', 'AGENTS'] } },
+      where: { id: botId, tenantId, type: { in: ["SIMPLE", "AGENTS"] } },
       include: {
         triggers: true,
-        steps: { orderBy: { ordem: 'asc' } },
+        steps: { orderBy: { ordem: "asc" } },
       },
     });
-    if (!bot) throw new NotFoundException('Bot não encontrado');
+    if (!bot) throw new NotFoundException("Bot não encontrado");
 
     const events: SandboxEvent[] = [];
     const visitedSteps: number[] = [];
@@ -64,7 +74,7 @@ export class SandboxBotService {
 
     const firstStep = bot.steps[0];
     if (!firstStep) {
-      return { events, finalStatus: 'error', visitedSteps };
+      return { events, finalStatus: "error", visitedSteps };
     }
 
     // ─── SIMPLE: 1ª mensagem do usuário dispara o step 1 (1x por sessão).
@@ -72,19 +82,19 @@ export class SandboxBotService {
     // bot-engine em produção (12h por contato). Aqui no sandbox só sinalizamos
     // o estado 'cooldown', sem simular a passagem das 12h. O balão do usuário
     // continua sendo emitido para o usuário poder confirmar o silêncio do bot.
-    if (bot.type === 'SIMPLE') {
+    if (bot.type === "SIMPLE") {
       const validated = validateStepContent(
         firstStep.tipoMensagem,
         firstStep.conteudo as Record<string, unknown>,
       );
 
       let responded = false;
-      let finalStatus: SandboxResult['finalStatus'] = 'finished';
+      let finalStatus: SandboxResult["finalStatus"] = "finished";
 
       for (const userMsg of userMsgs) {
         events.push({
-          direction: 'user',
-          type: 'text',
+          direction: "user",
+          type: "text",
           text: userMsg,
           timestamp: now(),
         });
@@ -94,10 +104,10 @@ export class SandboxBotService {
           this.emitStep(events, validated, firstStep.tipoMensagem, now());
           visitedSteps.push(firstStep.ordem);
           responded = true;
-          finalStatus = 'finished';
+          finalStatus = "finished";
         } else {
           // Em cooldown: bot em silêncio (na vida real, respeita 12h).
-          finalStatus = 'cooldown';
+          finalStatus = "cooldown";
         }
       }
 
@@ -105,14 +115,14 @@ export class SandboxBotService {
       if (!responded) {
         this.emitStep(events, validated, firstStep.tipoMensagem, now());
         visitedSteps.push(firstStep.ordem);
-        finalStatus = 'finished';
+        finalStatus = "finished";
       }
 
       return { events, finalStatus, visitedSteps };
     }
 
     // ─── AGENTS ───────────────────────────────────────────────────
-    const startMessage = dto.startMessage ?? '';
+    const startMessage = dto.startMessage ?? "";
 
     // 1. Avalia trigger.
     const triggerHit = this.matchTrigger(bot.triggers, startMessage);
@@ -120,13 +130,13 @@ export class SandboxBotService {
       return {
         events: [
           {
-            direction: 'bot',
-            type: 'no_trigger',
-            text: 'Nenhum gatilho casou com a mensagem inicial.',
+            direction: "bot",
+            type: "no_trigger",
+            text: "Nenhum gatilho casou com a mensagem inicial.",
             timestamp: now(),
           },
         ],
-        finalStatus: 'waiting',
+        finalStatus: "waiting",
         visitedSteps: [],
       };
     }
@@ -146,85 +156,96 @@ export class SandboxBotService {
     visited.push(currentStep.ordem);
 
     // Estado do fluxo: 'active' (ainda responde), 'finished', 'routed' ou 'error'.
-    let fluxStatus: 'active' | 'finished' | 'routed' | 'error' = 'active';
+    let fluxStatus: "active" | "finished" | "routed" | "error" = "active";
     const stepConds =
-      (currentStep.condicoesProximo as unknown as { match: string }[] | null) ?? [];
-    if (currentStep.tipoMensagem === 'handoff') {
-      fluxStatus = 'routed';
+      (currentStep.condicoesProximo as unknown as { match: string }[] | null) ??
+      [];
+    if (currentStep.tipoMensagem === "handoff") {
+      fluxStatus = "routed";
     } else if (stepConds.length === 0) {
-      fluxStatus = 'finished';
+      fluxStatus = "finished";
     }
 
     // 3. Itera sobre userMessages — sempre emite o balão do usuário; só
     // responde se o fluxo ainda estiver 'active'.
     for (const userMsg of userMsgs) {
       events.push({
-        direction: 'user',
-        type: 'text',
+        direction: "user",
+        type: "text",
         text: userMsg,
         timestamp: now(),
       });
 
-      if (fluxStatus !== 'active') continue; // sessão acabou: bot em silêncio.
+      if (fluxStatus !== "active") continue; // sessão acabou: bot em silêncio.
 
       const next = this.decideNext(currentStep, userMsg);
-      if (next === 'fallback') {
+      if (next === "fallback") {
         const fallbackOrder = currentStep.fallbackStepOrder ?? null;
         if (fallbackOrder === null) {
-          fluxStatus = 'finished';
+          fluxStatus = "finished";
           continue;
         }
         const fbStep = bot.steps.find((s) => s.ordem === fallbackOrder);
         if (!fbStep) {
-          fluxStatus = 'error';
+          fluxStatus = "error";
           continue;
         }
         currentStep = fbStep;
         this.emitStep(
           events,
-          validateStepContent(fbStep.tipoMensagem, fbStep.conteudo as Record<string, unknown>),
+          validateStepContent(
+            fbStep.tipoMensagem,
+            fbStep.conteudo as Record<string, unknown>,
+          ),
           fbStep.tipoMensagem,
           now(),
         );
         visited.push(currentStep.ordem);
-        if (currentStep.tipoMensagem === 'handoff') {
-          fluxStatus = 'routed';
+        if (currentStep.tipoMensagem === "handoff") {
+          fluxStatus = "routed";
           continue;
         }
         const conds =
-          (currentStep.condicoesProximo as unknown as { match: string }[] | null) ?? [];
-        if (conds.length === 0) fluxStatus = 'finished';
+          (currentStep.condicoesProximo as unknown as
+            | { match: string }[]
+            | null) ?? [];
+        if (conds.length === 0) fluxStatus = "finished";
         continue;
       }
       if (next === null) {
-        fluxStatus = 'finished';
+        fluxStatus = "finished";
         continue;
       }
       const nextStep = bot.steps.find((s) => s.ordem === next);
       if (!nextStep) {
-        fluxStatus = 'error';
+        fluxStatus = "error";
         continue;
       }
       currentStep = nextStep;
       this.emitStep(
         events,
-        validateStepContent(nextStep.tipoMensagem, nextStep.conteudo as Record<string, unknown>),
+        validateStepContent(
+          nextStep.tipoMensagem,
+          nextStep.conteudo as Record<string, unknown>,
+        ),
         nextStep.tipoMensagem,
         now(),
       );
       visited.push(currentStep.ordem);
-      if (currentStep.tipoMensagem === 'handoff') {
-        fluxStatus = 'routed';
+      if (currentStep.tipoMensagem === "handoff") {
+        fluxStatus = "routed";
         continue;
       }
       const conds =
-        (currentStep.condicoesProximo as unknown as { match: string }[] | null) ?? [];
-      if (conds.length === 0) fluxStatus = 'finished';
+        (currentStep.condicoesProximo as unknown as
+          | { match: string }[]
+          | null) ?? [];
+      if (conds.length === 0) fluxStatus = "finished";
     }
 
     // 'active' ao final do loop = o fluxo ainda espera a próxima resposta.
-    const finalStatus: SandboxResult['finalStatus'] =
-      fluxStatus === 'active' ? 'waiting' : fluxStatus;
+    const finalStatus: SandboxResult["finalStatus"] =
+      fluxStatus === "active" ? "waiting" : fluxStatus;
     return { events, finalStatus, visitedSteps: visited };
   }
 
@@ -235,25 +256,36 @@ export class SandboxBotService {
     if (triggers.length === 0) return false;
     const msg = message.toLowerCase().trim();
     for (const t of triggers) {
-      if (t.tipo === 'first_message') return true;
-      if (t.tipo === 'keyword' && t.valor && msg.includes(t.valor.toLowerCase())) return true;
+      if (t.tipo === "first_message") return true;
+      if (
+        t.tipo === "keyword" &&
+        t.valor &&
+        msg.includes(t.valor.toLowerCase())
+      )
+        return true;
     }
     return false;
   }
 
   private decideNext(
-    step: { condicoesProximo: Prisma.JsonValue | null; fallbackStepOrder: number | null },
+    step: {
+      condicoesProximo: Prisma.JsonValue | null;
+      fallbackStepOrder: number | null;
+    },
     userMessage: string,
-  ): number | 'fallback' | null {
+  ): number | "fallback" | null {
     const condicoes =
-      (step.condicoesProximo as unknown as { match: string; stepOrder: number }[]) ?? [];
+      (step.condicoesProximo as unknown as {
+        match: string;
+        stepOrder: number;
+      }[]) ?? [];
     const reply = userMessage.toLowerCase().trim();
     for (const cond of condicoes) {
       if (cond.match.toLowerCase().trim() === reply) {
         return cond.stepOrder;
       }
     }
-    return 'fallback';
+    return "fallback";
   }
 
   private emitStep(
@@ -262,22 +294,24 @@ export class SandboxBotService {
     tipo: string,
     timestamp: string,
   ) {
-    if (tipo === 'text') {
+    if (tipo === "text") {
       const c = conteudo as TextContent;
       events.push({
-        direction: 'bot',
-        type: 'text',
+        direction: "bot",
+        type: "text",
         text: c.text,
         payload: { text: c.text },
         timestamp,
       });
-    } else if (tipo === 'list') {
+    } else if (tipo === "list") {
       const c = conteudo as ListContent;
       events.push({
-        direction: 'bot',
-        type: 'list',
+        direction: "bot",
+        type: "list",
         text: c.title,
-        selectedId: c.sections.flatMap((s) => s.rows.map((r) => `${r.title}:${r.id}`)).join('\n'),
+        selectedId: c.sections
+          .flatMap((s) => s.rows.map((r) => `${r.title}:${r.id}`))
+          .join("\n"),
         // Payload alinhado ao schema Evolution API v2.3.7 (SendListDto / listMessageSchema):
         // flat, com `footerText`, `buttonText`, `sections` (não mais `sectionsText`/`descriptionText`).
         payload: {
@@ -290,20 +324,22 @@ export class SandboxBotService {
               rows: s.rows.map((r) => ({
                 rowId: r.id,
                 title: r.title,
-                ...((r.description ?? '').length > 0 ? { description: r.description } : {}),
+                ...((r.description ?? "").length > 0
+                  ? { description: r.description }
+                  : {}),
               })),
             })),
           },
         },
         timestamp,
       });
-    } else if (tipo === 'buttons') {
+    } else if (tipo === "buttons") {
       const c = conteudo as ButtonsContent;
       events.push({
-        direction: 'bot',
-        type: 'buttons',
+        direction: "bot",
+        type: "buttons",
         text: c.text,
-        selectedId: c.buttons.map((b) => `${b.title}:${b.id}`).join('\n'),
+        selectedId: c.buttons.map((b) => `${b.title}:${b.id}`).join("\n"),
         // Payload alinhado ao schema Evolution API v2.3.7 (SendButtonsDto / buttonsMessageSchema):
         // flat, cada botão usa { type: 'reply', id, displayText } (não mais `reply.title`/`index`).
         payload: {
@@ -311,7 +347,7 @@ export class SandboxBotService {
             title: c.text,
             ...(c.footer ? { footer: c.footer } : {}),
             buttons: c.buttons.map((b) => ({
-              type: 'reply',
+              type: "reply",
               id: b.id,
               displayText: b.title,
             })),
@@ -319,42 +355,48 @@ export class SandboxBotService {
         },
         timestamp,
       });
-    } else if (tipo === 'media') {
+    } else if (tipo === "media") {
       const c = conteudo as MediaContent;
       const payload: Record<string, unknown> = {};
-      if (c.mediaType === 'image' || c.mediaType === 'video' || c.mediaType === 'document') {
+      if (
+        c.mediaType === "image" ||
+        c.mediaType === "video" ||
+        c.mediaType === "document"
+      ) {
         // SendMediaDto — payload flat (não `mediaMessage.mediatype`).
         payload.mediaMessage = {
           mediatype: c.mediaType,
           media: c.url,
           ...(c.caption ? { caption: c.caption } : {}),
-          ...(c.mediaType === 'document'
-            ? { fileName: c.url.split('/').pop() ?? 'file' }
+          ...(c.mediaType === "document"
+            ? { fileName: c.url.split("/").pop() ?? "file" }
             : {}),
         };
-      } else if (c.mediaType === 'sticker') {
+      } else if (c.mediaType === "sticker") {
         // SendStickerDto — endpoint próprio, campo `sticker` (não `mediatype`).
         payload.mediaMessage = { sticker: c.url };
-      } else if (c.mediaType === 'audio') {
+      } else if (c.mediaType === "audio") {
         // SendAudioDto — endpoint sendWhatsAppAudio, campo `audio`.
         payload.audioMessage = { audio: c.url };
       }
       events.push({
-        direction: 'bot',
-        type: 'media',
+        direction: "bot",
+        type: "media",
         text:
-          c.mediaType === 'image' || c.mediaType === 'video' || c.mediaType === 'document'
+          c.mediaType === "image" ||
+          c.mediaType === "video" ||
+          c.mediaType === "document"
             ? (c.caption ?? c.url)
             : c.url,
         payload,
         timestamp,
       });
-    } else if (tipo === 'handoff') {
+    } else if (tipo === "handoff") {
       const c = conteudo as HandoffContent;
       events.push({
-        direction: 'bot',
-        type: 'handoff',
-        text: c.message ?? 'Conversa transferida para atendimento humano.',
+        direction: "bot",
+        type: "handoff",
+        text: c.message ?? "Conversa transferida para atendimento humano.",
         timestamp,
       });
     }

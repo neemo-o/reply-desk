@@ -108,7 +108,13 @@ export interface SandboxEvent {
 
 export interface SandboxResult {
   events: SandboxEvent[];
-  finalStatus: "finished" | "routed" | "waiting" | "error" | "offline" | "cooldown";
+  finalStatus:
+    | "finished"
+    | "routed"
+    | "waiting"
+    | "error"
+    | "offline"
+    | "cooldown";
   visitedSteps: number[];
 }
 

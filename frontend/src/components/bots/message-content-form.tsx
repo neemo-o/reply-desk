@@ -82,7 +82,9 @@ export function MessageContentForm({
 
       {type === "text" && (
         <div className="space-y-1.5">
-          <Label htmlFor="mc-text" className="text-xs">Texto</Label>
+          <Label htmlFor="mc-text" className="text-xs">
+            Texto
+          </Label>
           <textarea
             id="mc-text"
             value={(value.text as string | undefined) ?? ""}
@@ -99,7 +101,9 @@ export function MessageContentForm({
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1.5">
-              <Label htmlFor="mc-media-type" className="text-xs">Tipo de mídia</Label>
+              <Label htmlFor="mc-media-type" className="text-xs">
+                Tipo de mídia
+              </Label>
               <select
                 id="mc-media-type"
                 value={(value.mediaType as string | undefined) ?? "image"}
@@ -115,7 +119,9 @@ export function MessageContentForm({
               </select>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="mc-url" className="text-xs">URL da mídia</Label>
+              <Label htmlFor="mc-url" className="text-xs">
+                URL da mídia
+              </Label>
               <Input
                 id="mc-url"
                 value={(value.url as string | undefined) ?? ""}
@@ -126,7 +132,9 @@ export function MessageContentForm({
             </div>
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="mc-caption" className="text-xs">Legenda (opcional)</Label>
+            <Label htmlFor="mc-caption" className="text-xs">
+              Legenda (opcional)
+            </Label>
             <Input
               id="mc-caption"
               value={(value.caption as string | undefined) ?? ""}
@@ -141,7 +149,9 @@ export function MessageContentForm({
       {type === "buttons" && (
         <div className="space-y-3">
           <div className="space-y-1.5">
-            <Label htmlFor="mc-btext" className="text-xs">Texto do passo (cabeçalho)</Label>
+            <Label htmlFor="mc-btext" className="text-xs">
+              Texto do passo (cabeçalho)
+            </Label>
             <textarea
               id="mc-btext"
               value={(value.text as string | undefined) ?? ""}
@@ -153,7 +163,9 @@ export function MessageContentForm({
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="mc-bfooter" className="text-xs">Rodapé (opcional)</Label>
+            <Label htmlFor="mc-bfooter" className="text-xs">
+              Rodapé (opcional)
+            </Label>
             <Input
               id="mc-bfooter"
               value={(value.footer as string | undefined) ?? ""}
@@ -176,7 +188,9 @@ export function MessageContentForm({
       {type === "list" && (
         <div className="space-y-3">
           <div className="space-y-1.5">
-            <Label htmlFor="mc-ltext" className="text-xs">Subtítulo / rodapé da lista</Label>
+            <Label htmlFor="mc-ltext" className="text-xs">
+              Subtítulo / rodapé da lista
+            </Label>
             <textarea
               id="mc-ltext"
               value={(value.text as string | undefined) ?? ""}
@@ -189,7 +203,9 @@ export function MessageContentForm({
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1.5">
-              <Label htmlFor="mc-ltitle" className="text-xs">Título da lista</Label>
+              <Label htmlFor="mc-ltitle" className="text-xs">
+                Título da lista
+              </Label>
               <Input
                 id="mc-ltitle"
                 value={(value.title as string | undefined) ?? ""}
@@ -199,7 +215,9 @@ export function MessageContentForm({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="mc-lbtn" className="text-xs">Rótulo do botão</Label>
+              <Label htmlFor="mc-lbtn" className="text-xs">
+                Rótulo do botão
+              </Label>
               <Input
                 id="mc-lbtn"
                 value={(value.buttonText as string | undefined) ?? ""}
@@ -215,13 +233,18 @@ export function MessageContentForm({
             </Label>
             <Input
               id="mc-lsect"
-              value={(normalizeListSections(value.sections)[0]?.title as string | undefined) ?? ""}
+              value={
+                (normalizeListSections(value.sections)[0]?.title as
+                  | string
+                  | undefined) ?? ""
+              }
               onChange={(e) =>
                 patch({
                   sections: [
                     {
                       title: e.target.value,
-                      rows: normalizeListSections(value.sections)[0]?.rows ?? [],
+                      rows:
+                        normalizeListSections(value.sections)[0]?.rows ?? [],
                     },
                   ],
                 })
@@ -242,8 +265,9 @@ export function MessageContentForm({
                   sections: [
                     {
                       title:
-                        (normalizeListSections(value.sections)[0]?.title as string | undefined) ??
-                        "",
+                        (normalizeListSections(value.sections)[0]?.title as
+                          | string
+                          | undefined) ?? "",
                       rows,
                     },
                   ],
@@ -257,7 +281,9 @@ export function MessageContentForm({
 
       {type === "handoff" && (
         <div className="space-y-1.5">
-          <Label htmlFor="mc-hmsg" className="text-xs">Mensagem antes do handoff</Label>
+          <Label htmlFor="mc-hmsg" className="text-xs">
+            Mensagem antes do handoff
+          </Label>
           <textarea
             id="mc-hmsg"
             value={(value.text as string | undefined) ?? ""}
@@ -268,7 +294,8 @@ export function MessageContentForm({
             className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
           />
           <p className="text-xs text-muted-foreground">
-            O step final com handoff transfere o atendimento para um humano — não há próximos passos.
+            O step final com handoff transfere o atendimento para um humano —
+            não há próximos passos.
           </p>
         </div>
       )}
@@ -285,13 +312,16 @@ interface ButtonItem {
 function normalizeButtons(raw: unknown): ButtonItem[] {
   if (!Array.isArray(raw)) return [];
   return (raw as unknown[])
-    .filter((x): x is Record<string, unknown> => Boolean(x) && typeof x === "object")
+    .filter(
+      (x): x is Record<string, unknown> => Boolean(x) && typeof x === "object",
+    )
     .map((x) => ({
       id: String((x as { id?: unknown }).id ?? crypto.randomUUID()),
       title: String((x as { title?: unknown }).title ?? ""),
-      description: typeof (x as { description?: unknown }).description === "string"
-        ? String((x as { description?: unknown }).description)
-        : undefined,
+      description:
+        typeof (x as { description?: unknown }).description === "string"
+          ? String((x as { description?: unknown }).description)
+          : undefined,
     }));
 }
 
@@ -376,7 +406,9 @@ function normalizeListSections(raw: unknown): ListSection[] {
     return [];
   }
   return (raw as unknown[])
-    .filter((x): x is Record<string, unknown> => Boolean(x) && typeof x === "object")
+    .filter(
+      (x): x is Record<string, unknown> => Boolean(x) && typeof x === "object",
+    )
     .map((x) => ({
       title: String((x as { title?: unknown }).title ?? ""),
       rows: normalizeListRowField((x as { rows?: unknown }).rows),
@@ -386,13 +418,16 @@ function normalizeListSections(raw: unknown): ListSection[] {
 function normalizeListRowField(raw: unknown): ListRow[] {
   if (!Array.isArray(raw)) return [];
   return (raw as unknown[])
-    .filter((x): x is Record<string, unknown> => Boolean(x) && typeof x === "object")
+    .filter(
+      (x): x is Record<string, unknown> => Boolean(x) && typeof x === "object",
+    )
     .map((x) => ({
       id: String((x as { id?: unknown }).id ?? crypto.randomUUID()),
       title: String((x as { title?: unknown }).title ?? ""),
-      description: typeof (x as { description?: unknown }).description === "string"
-        ? String((x as { description?: unknown }).description)
-        : undefined,
+      description:
+        typeof (x as { description?: unknown }).description === "string"
+          ? String((x as { description?: unknown }).description)
+          : undefined,
     }));
 }
 
@@ -418,7 +453,10 @@ function ListRowsEditor({
   return (
     <div className="space-y-2">
       {items.map((it) => (
-        <div key={it.id} className="space-y-1.5 rounded-md border border-border/60 p-2">
+        <div
+          key={it.id}
+          className="space-y-1.5 rounded-md border border-border/60 p-2"
+        >
           <div className="flex items-start gap-2">
             <Input
               value={it.title}
@@ -442,7 +480,8 @@ function ListRowsEditor({
             value={it.description ?? ""}
             onChange={(e) =>
               update(it.id, {
-                description: e.target.value.length > 0 ? e.target.value : undefined,
+                description:
+                  e.target.value.length > 0 ? e.target.value : undefined,
               })
             }
             placeholder="Descrição (opcional)"

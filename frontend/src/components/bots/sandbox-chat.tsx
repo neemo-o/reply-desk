@@ -45,7 +45,13 @@ const FINAL_STATUS_BADGE: Record<
  * Observação: por ser batch, os balões do bot são re-renderizados a cada
  * envio (reexecução do fluxo). Não há persistência de sessão no backend.
  */
-export function SandboxChat({ botId, botName }: { botId: string; botName: string }) {
+export function SandboxChat({
+  botId,
+  botName,
+}: {
+  botId: string;
+  botName: string;
+}) {
   const testBot = useTestBot();
   const [input, setInput] = useState("");
   const [userMessages, setUserMessages] = useState<string[]>([]);
@@ -61,7 +67,10 @@ export function SandboxChat({ botId, botName }: { botId: string; botName: string
 
   // Auto-scroll para o fim ao chegar novos eventos.
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    scrollRef.current?.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior: "smooth",
+    });
   }, [result?.events.length, testBot.isPending]);
 
   const events = result?.events ?? [];
@@ -106,23 +115,37 @@ export function SandboxChat({ botId, botName }: { botId: string; botName: string
             <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
               Lista interativa
             </p>
-            <p className="mt-1 text-sm font-semibold text-foreground">{listMessage.title}</p>
+            <p className="mt-1 text-sm font-semibold text-foreground">
+              {listMessage.title}
+            </p>
             {listMessage.footerText ? (
-              <p className="text-[11px] text-muted-foreground">{listMessage.footerText}</p>
+              <p className="text-[11px] text-muted-foreground">
+                {listMessage.footerText}
+              </p>
             ) : null}
           </div>
           <div className="space-y-3">
             {listMessage.sections.map((section, si) => (
-              <div key={si} className="rounded-lg border border-border bg-slate-950/5 p-3">
+              <div
+                key={si}
+                className="rounded-lg border border-border bg-slate-950/5 p-3"
+              >
                 <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
                   {section.title}
                 </p>
                 <div className="space-y-2">
                   {section.rows.map((row) => (
-                    <div key={row.rowId} className="rounded-lg bg-background px-3 py-2">
-                      <p className="font-medium text-sm text-foreground">{row.title}</p>
+                    <div
+                      key={row.rowId}
+                      className="rounded-lg bg-background px-3 py-2"
+                    >
+                      <p className="font-medium text-sm text-foreground">
+                        {row.title}
+                      </p>
                       {row.description ? (
-                        <p className="text-[11px] text-muted-foreground">{row.description}</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          {row.description}
+                        </p>
                       ) : null}
                       <p className="mt-1 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
                         rowId: {row.rowId}
@@ -133,7 +156,9 @@ export function SandboxChat({ botId, botName }: { botId: string; botName: string
               </div>
             ))}
           </div>
-          <p className="mt-3 text-[11px] text-muted-foreground">Botão: {listMessage.buttonText}</p>
+          <p className="mt-3 text-[11px] text-muted-foreground">
+            Botão: {listMessage.buttonText}
+          </p>
         </div>
       );
     }
@@ -150,9 +175,13 @@ export function SandboxChat({ botId, botName }: { botId: string; botName: string
             <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
               Botões interativos
             </p>
-            <p className="mt-1 text-sm font-semibold text-foreground">{buttonsMessage.title}</p>
+            <p className="mt-1 text-sm font-semibold text-foreground">
+              {buttonsMessage.title}
+            </p>
             {buttonsMessage.footer ? (
-              <p className="text-[11px] text-muted-foreground">{buttonsMessage.footer}</p>
+              <p className="text-[11px] text-muted-foreground">
+                {buttonsMessage.footer}
+              </p>
             ) : null}
           </div>
           <div className="grid gap-2">
@@ -161,8 +190,14 @@ export function SandboxChat({ botId, botName }: { botId: string; botName: string
                 key={idx}
                 className="rounded-lg border border-border bg-slate-950/5 px-3 py-2 text-sm"
               >
-                <p className="font-medium text-foreground">{button.displayText ?? ""}</p>
-                {button.id ? <p className="text-[10px] text-muted-foreground">id: {button.id}</p> : null}
+                <p className="font-medium text-foreground">
+                  {button.displayText ?? ""}
+                </p>
+                {button.id ? (
+                  <p className="text-[10px] text-muted-foreground">
+                    id: {button.id}
+                  </p>
+                ) : null}
               </div>
             ))}
           </div>
@@ -187,7 +222,9 @@ export function SandboxChat({ botId, botName }: { botId: string; botName: string
               Mídia
             </p>
             <div className="mt-2 space-y-2 text-sm text-foreground">
-              <p className="font-medium">Tipo: {media.mediatype ?? (media.sticker ? "sticker" : "audio")}</p>
+              <p className="font-medium">
+                Tipo: {media.mediatype ?? (media.sticker ? "sticker" : "audio")}
+              </p>
               <p>URL: {media.media ?? media.sticker ?? media.audio ?? ""}</p>
               {media.caption ? <p>Caption: {media.caption}</p> : null}
               {media.fileName ? <p>Filename: {media.fileName}</p> : null}
@@ -210,7 +247,9 @@ export function SandboxChat({ botId, botName }: { botId: string; botName: string
       <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold">{botName}</p>
-          <p className="text-xs text-muted-foreground">Sandbox · simulação de conversa</p>
+          <p className="text-xs text-muted-foreground">
+            Sandbox · simulação de conversa
+          </p>
         </div>
         <Button
           size="sm"
@@ -231,8 +270,7 @@ export function SandboxChat({ botId, botName }: { botId: string; botName: string
         {events.length === 0 && !testBot.isPending && (
           <p className="p-4 text-center text-sm text-muted-foreground">
             Digite a primeira mensagem para iniciar a simulação.
-            <br />
-            O gatilho do bot precisa casar com o texto.
+            <br />O gatilho do bot precisa casar com o texto.
           </p>
         )}
 
@@ -256,7 +294,9 @@ export function SandboxChat({ botId, botName }: { botId: string; botName: string
                 {ev.direction === "bot" ? "Bot" : "Você"}
               </p>
               <div className="space-y-2">
-                <p className="whitespace-pre-wrap break-words">{ev.text ?? ev.type}</p>
+                <p className="whitespace-pre-wrap break-words">
+                  {ev.text ?? ev.type}
+                </p>
                 {ev.payload && renderSandboxPayload(ev)}
               </div>
             </div>
