@@ -189,9 +189,12 @@ export class BotsService {
       );
     }
 
-    // 🔒 Bug 6 — Se está ativando o bot (draft/testing/inactive → active),
-    // verifica o limite de bots ativos do plano.
-    if (nextStatus === 'active' && bot.status !== 'active') {
+    // 🔒 Bug 6 — Se está ativando o bot (draft/inactive → active/testing),
+    // verifica o limite de bots ativos do plano. Bots em testing também contam
+    // contra maxActiveBots, pois são tratados como ativos.
+    const wasInactiveForLimits = bot.status === 'draft' || bot.status === 'inactive';
+    const willCountAsActive = nextStatus === 'active' || nextStatus === 'testing';
+    if (willCountAsActive && wasInactiveForLimits) {
       await this.planLimits.assertCanActivateBot(tenantId, bot.id);
     }
 

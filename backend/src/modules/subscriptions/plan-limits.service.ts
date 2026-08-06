@@ -108,9 +108,10 @@ export class PlanLimitsService {
    * 🔒 Bug 6 — Verifica se o tenant pode ativar mais um bot (status → active).
    *
    * Chamado pelo BotsService.update() quando o status muda para 'active'.
-   * Conta bots que já estão com status='active' e compara com maxActiveBots.
-   * Bots em testing NÃO contam (são ativos como escopo, mas restritos a
-   * um telefone).
+   * Conta bots que já estão com status='active' OU 'testing' e compara com
+   * maxActiveBots. Bots em testing também contam contra o limite, pois são
+   * tratados como ativos (escopo limitado a `testContactPhone`, mas em
+   * funcionamento real).
    *
    * @param excludeBotId Ignora este bot na contagem (para quando se está
    *                      re-ativando um bot que já era active).
@@ -121,21 +122,20 @@ export class PlanLimitsService {
 
     const [activeCount] = await Promise.all([
       this.prisma.bot.count({
-        where: { tenantId, status: 'active' },
+        where: { tenantId, status: { in: ['active', 'testing'] } },
       }),
     ]);
 
-    // Se o bot que estamos ativando já era active (re-ativação), ele não
-    // conta contra o limite — a query já exclui ele se excludeBotId for
-    // passado como bot sendo "testeing → active".
+    // Se o bot que estamos ativando já era active/testing (re-ativação), ele
+    // não conta contra o limite — subtrai se excludeBotId foi informado.
+    const effectiveCount = excludeBotId
+      ? await this.prisma.bot.count({
+          where: { tenantId, status: { in: ['active', 'testing'] }, NOT: { id: excludeBotId } },
+        })
+      : activeCount;
+
     const maxActive = plan.maxActiveBots ?? 1;
-    if (activeCount > maxActive) {
-      throw new ForbiddenException(
-        `Limite de bots ativos do plano ${plan.name} atingido ` +
-        `(${maxActive}). Desative outro bot antes de ativar este.`
-      );
-    }
-    if (activeCount >= maxActive && !excludeBotId) {
+    if (effectiveCount >= maxActive) {
       throw new ForbiddenException(
         `Limite de bots ativos do plano ${plan.name} atingido ` +
         `(${maxActive}). Desative outro bot antes de ativar este.`

@@ -172,15 +172,24 @@ function SidebarContent({ onNavigate }: SidebarContentProps) {
   const { role } = useAuth();
   const showManagement = role === "owner" || role === "admin";
 
-  // 📱 Badge no sidebar: conta sessões que precisam de atenção do usuário.
-  // `qr_expired` → vermelho (ação obrigatória); `connecting` → amarelo (em andamento).
-  // Só owner/admin veem o badge (agentes não gerenciam sessões).
+  // 📱 Badge no sidebar: contagem por status das sessões do tenant.
+  // - `qr_expired` → status terminal (vermelho — ação obrigatória).
+  // - `connecting` → em andamento (amarelo).
+  // - `connected` → ativa e usável (verde).
+  // Badges podem coexistir; cada status aparece com sua cor. Só
+  // owner/admin veem os badges (agentes não gerenciam sessões).
   const { data: sessions } = useWhatsappSessions();
-  const needsAttention = useMemo(() => {
+  const errorCount = useMemo(() => {
     if (!showManagement || !sessions) return 0;
-    return sessions.filter(
-      (s) => s.status === "qr_expired" || s.status === "connecting",
-    ).length;
+    return sessions.filter((s) => s.status === "qr_expired").length;
+  }, [showManagement, sessions]);
+  const connectingCount = useMemo(() => {
+    if (!showManagement || !sessions) return 0;
+    return sessions.filter((s) => s.status === "connecting").length;
+  }, [showManagement, sessions]);
+  const connectedCount = useMemo(() => {
+    if (!showManagement || !sessions) return 0;
+    return sessions.filter((s) => s.status === "connected").length;
   }, [showManagement, sessions]);
 
   return (
@@ -222,8 +231,10 @@ function SidebarContent({ onNavigate }: SidebarContentProps) {
         </p>
         {ATTENDANCE_ITEMS.map((item) => {
           const Icon = item.icon;
-          // 📱 Badge: só para a rota de Sessões e só quando há contagem > 0.
-          const showItemBadge = item.to === "/dashboard/whatsapp" && needsAttention > 0;
+          // 📱 Badges: só para a rota de Sessões. Cada status tem sua cor
+          // e só aparece quando há contagem > 0. Prioridade visual: vermelho
+          // (erro) > amarelo (conectando) > verde (conectadas).
+          const isSessionsRoute = item.to === "/dashboard/whatsapp";
           return (
             <NavLink
               key={item.to}
@@ -241,9 +252,19 @@ function SidebarContent({ onNavigate }: SidebarContentProps) {
             >
               <Icon className="h-4.5 w-4.5 shrink-0" />
               <span className="flex-1">{item.label}</span>
-              {showItemBadge && (
-                <Badge variant="warning" className="ml-auto h-5 min-w-5 justify-center px-1.5 tabular-nums">
-                  {needsAttention}
+              {isSessionsRoute && errorCount > 0 && (
+                <Badge variant="destructive" className="h-5 min-w-5 justify-center px-1.5 tabular-nums" title={`${errorCount} sessão(ões) com erro`}>
+                  {errorCount}
+                </Badge>
+              )}
+              {isSessionsRoute && connectingCount > 0 && (
+                <Badge variant="warning" className="h-5 min-w-5 justify-center px-1.5 tabular-nums" title={`${connectingCount} sessão(ões) conectando`}>
+                  {connectingCount}
+                </Badge>
+              )}
+              {isSessionsRoute && connectedCount > 0 && (
+                <Badge variant="success" className="h-5 min-w-5 justify-center px-1.5 tabular-nums" title={`${connectedCount} sessão(ões) conectada(s)`}>
+                  {connectedCount}
                 </Badge>
               )}
             </NavLink>

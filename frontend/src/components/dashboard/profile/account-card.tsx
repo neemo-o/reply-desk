@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Loader2 } from "lucide-react";
+import { Loader2, UserCircle } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -67,7 +67,9 @@ export function AccountCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Minha conta</CardTitle>
+        <CardTitle className="flex items-center gap-2">
+          <UserCircle className="h-4 w-4" /> Minha conta
+        </CardTitle>
         <CardDescription>Dados usados para identificar você no ReplyDesk.</CardDescription>
       </CardHeader>
       <CardContent>

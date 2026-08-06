@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Loader2, ChevronDown, Clock, MessageSquareWarning } from "lucide-react";
+import { Loader2, ChevronDown, Clock, MessageSquareWarning, Building2 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -74,7 +74,9 @@ export function OrganizationCard() {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>Organização</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <Building2 className="h-4 w-4" /> Organização
+          </CardTitle>
           <CardDescription>
             {isOwner
               ? "Edite os dados do seu workspace. Apenas o dono pode alterar."

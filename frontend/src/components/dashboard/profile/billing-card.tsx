@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { Loader2, CreditCard } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -111,7 +111,9 @@ export function BillingCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Plano e cobrança</CardTitle>
+        <CardTitle className="flex items-center gap-2">
+          <CreditCard className="h-4 w-4" /> Plano e cobrança
+        </CardTitle>
         <CardDescription>Gerencie a assinatura da sua organização.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">

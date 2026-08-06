@@ -91,7 +91,7 @@ export function BotsPage() {
   }, [bots]);
 
   const activeCount = useMemo(
-    () => (bots ?? []).filter((b) => b.status === "active").length,
+    () => (bots ?? []).filter((b) => b.status === "active" || b.status === "testing").length,
     [bots],
   );
 
@@ -206,35 +206,34 @@ export function BotsPage() {
           </SheetHeader>
 
           <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="bname" className="text-xs">Nome</Label>
-                <Input
-                  id="bname"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Ex: Atendimento automático"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="btype" className="text-xs">Tipo</Label>
-                <select
-                  id="btype"
-                  value={type}
-                  onChange={(e) => setType(e.target.value as BotType)}
-                  className="h-10 w-full rounded-md border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                >
-                  {TYPE_ORDER.map((t) => (
-                    <option key={t} value={t}>
-                      {TYPE_LABEL[t]}
-                    </option>
-                  ))}
-                </select>
-              </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="bname" className="text-xs">Nome</Label>
+              <Input
+                id="bname"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Ex: Atendimento automático"
+              />
             </div>
-            <p className="text-xs text-muted-foreground">
-              {TYPE_DESCRIPTION[type]}
-            </p>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="btype" className="text-xs">Tipo</Label>
+              <select
+                id="btype"
+                value={type}
+                onChange={(e) => setType(e.target.value as BotType)}
+                className="h-10 w-full rounded-md border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                {TYPE_ORDER.map((t) => (
+                  <option key={t} value={t}>
+                    {TYPE_LABEL[t]}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-muted-foreground">
+                {TYPE_DESCRIPTION[type]}
+              </p>
+            </div>
 
             <div className="space-y-1.5">
               <Label htmlFor="bdesc" className="text-xs">Descrição (opcional)</Label>
