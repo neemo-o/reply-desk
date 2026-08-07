@@ -487,6 +487,7 @@ function StepsPanel({
                   onDelete={() => deleteStep.mutate({ botId, stepId: s.id })}
                   allowHandoff={isAgents}
                   isAgents={isAgents}
+                  allowedTypes={isAgents ? undefined : ["text", "media"]}
                 />
               </li>
             ))}
@@ -503,20 +504,23 @@ function StepsPanel({
                 value={newContent}
                 onChange={setNewContent}
                 allowHandoff={isAgents}
+                allowedTypes={isAgents ? undefined : ["text", "media"]}
               />
               <div className="space-y-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="new-order" className="text-xs">Ordem</Label>
-                  <Input
-                    id="new-order"
-                    type="number"
-                    min={1}
-                    value={newOrder}
-                    onChange={(e) =>
-                      setNewOrder(parseInt(e.target.value, 10) || 1)
-                    }
-                  />
-                </div>
+                {isAgents ? (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="new-order" className="text-xs">Ordem</Label>
+                    <Input
+                      id="new-order"
+                      type="number"
+                      min={1}
+                      value={newOrder}
+                      onChange={(e) =>
+                        setNewOrder(parseInt(e.target.value, 10) || 1)
+                      }
+                    />
+                  </div>
+                ) : null}
                 <Button
                   onClick={addStep}
                   disabled={createStep.isPending}
@@ -555,6 +559,7 @@ function StepRow({
   onDelete,
   allowHandoff,
   isAgents,
+  allowedTypes,
 }: {
   botId: string;
   step: BotStep;
@@ -563,6 +568,7 @@ function StepRow({
   onDelete: () => void;
   allowHandoff: boolean;
   isAgents: boolean;
+  allowedTypes?: StepMessageType[];
 }) {
   const updateStep = useUpdateStep();
 
@@ -643,6 +649,7 @@ function StepRow({
             value={draftContent}
             onChange={setDraftContent}
             allowHandoff={allowHandoff}
+            allowedTypes={allowedTypes}
           />
 
           {/* Condições de próximo e Fallback — apenas bots AGENTS (multi-step). */}

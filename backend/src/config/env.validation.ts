@@ -122,6 +122,10 @@ class EnvironmentVariables {
   SMTP_PASS?: string;
 
   @IsOptional()
+  @IsNumber()
+  BOT_SIMPLE_COOLDOWN_HOURS?: number;
+
+  @IsOptional()
   @IsString()
   @Matches(/^[^@]+@[^@]+\.[^@]+|^.+<[^@]+@[^@]+\.[^@]+>$/, {
     message: 'MAIL_FROM deve ser um e-mail válido ou formato "Nome <email@dominio.com>"',

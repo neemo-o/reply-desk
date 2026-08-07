@@ -341,8 +341,8 @@ export class BotsService {
       if (dto.ordem !== 1) {
         throw new BadRequestException('Bot SIMPLE aceita apenas um step com ordem=1');
       }
-      if (dto.tipoMensagem === 'handoff') {
-        throw new BadRequestException('Bot SIMPLE não suporta step handoff');
+      if (!['text', 'media'].includes(dto.tipoMensagem)) {
+        throw new BadRequestException('Bot SIMPLE aceita apenas step tipo=text ou tipo=media');
       }
       // Garante que não há steps pré-existentes.
       const existing = await this.prisma.botStep.findFirst({
@@ -381,8 +381,8 @@ export class BotsService {
 
     // Bot SIMPLE não pode virar handoff nem mudar de ordem.
     if (bot.type === 'SIMPLE') {
-      if (dto.tipoMensagem === 'handoff') {
-        throw new BadRequestException('Bot SIMPLE não suporta step handoff');
+      if (dto.tipoMensagem !== undefined && !['text', 'media'].includes(dto.tipoMensagem)) {
+        throw new BadRequestException('Bot SIMPLE aceita apenas step tipo=text ou tipo=media');
       }
       if (dto.ordem !== undefined && dto.ordem !== 1) {
         throw new BadRequestException('Bot SIMPLE só permite step ordem=1');

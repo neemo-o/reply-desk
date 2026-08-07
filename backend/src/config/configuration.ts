@@ -46,6 +46,9 @@ export default () => ({
     placeholderText:
       process.env.EVO_PLACEHOLDER_TEXT ??
       'Olá! Recebi sua mensagem. Em breve um atendente responderá. 🤖 ReplyDesk',
+    // Tempo de cooldown aplicado a bots SIMPLE entre envios de step 1.
+    // Default 12h, ajustável em env por BOT_SIMPLE_COOLDOWN_HOURS.
+    simpleCooldownHours: parseInt(process.env.BOT_SIMPLE_COOLDOWN_HOURS ?? '12', 10),
     // 🔒 S25 — Limite de tentativas de QR Code antes de marcar a sessão
     // como qr_expired. Cada poll do frontend que realmente bate na
     // Evolution (após a janela de debouncing) incrementa qrAttempts.

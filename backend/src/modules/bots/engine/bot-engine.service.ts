@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { EvolutionService } from '../../../common/evolution/evolution.service';
@@ -58,12 +59,19 @@ export interface BotInboundContext {
 export class BotEngineService {
   private readonly logger = new Logger(BotEngineService.name);
 
+  private readonly simpleCooldownMs: number;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly evolution: EvolutionService,
     private readonly parser: EvolutionMessageParser,
     private readonly realtime: RealtimeService,
-  ) {}
+    private readonly configService: ConfigService,
+  ) {
+    const cooldownHours =
+      this.configService.get<number>('evolution.simpleCooldownHours') ?? 12;
+    this.simpleCooldownMs = Math.max(0, cooldownHours) * 60 * 60 * 1000;
+  }
 
   async processInbound(ctx: BotInboundContext): Promise<void> {
     try {
@@ -298,10 +306,11 @@ export class BotEngineService {
    * (bot, contato), só reenvia o step 1 se já passaram ≥12h desde o último
    * envio (lastSentAt). Caso contrário, ignora a mensagem (return null-like).
    *
-   * 🔒 Exceção: bots em status='testing' IGNORAM o cooldown — o objetivo do
-   * modo testing é permitir testes iterativos, e exigir 12h entre cada
-   * tentativa tornaria o diagnóstico impraticável. Apenas ignoramos o runtime
-   * do cooldown e enviamos o step 1 (criando nova sessão finished) a cada inbound.
+   * 🔒 Em SIMPLE, o contato envia qualquer mensagem → respondemos UMA vez
+   * com step ordem=1 e marcamos BotSession status='finished'. Se já existe
+   * sessão finished para (bot, contato), só reenvia o step 1 se já passaram
+   * ≥ cooldown configurado desde o último envio. Caso contrário, ignora a
+   * mensagem.
    */
   private async handleSimpleInbound(
     tx: Prisma.TransactionClient,
@@ -309,8 +318,7 @@ export class BotEngineService {
     ctx: BotInboundContext,
     existing: { id: string; status: string; lastSentAt?: Date | null } | null,
   ): Promise<{ id: string; botId: string; status: string; currentStep: { ordem: number } | null } | null> {
-    const COOLDOWN_MS = 12 * 60 * 60 * 1000; // 12 horas
-    const isTesting = bot.status === 'testing';
+    const COOLDOWN_MS = this.simpleCooldownMs;
 
     // 🔒 Bug 3 — Se já existe sessão (active/finished/cooldown/routed),
     // respeita o cooldown._sessões não-active significam que o fluxo já
@@ -333,7 +341,7 @@ export class BotEngineService {
 
       // finished/routed/cooldown — só re-envia se cooldown esgotou.
       // 🔒 Exceção: em testing, ignora o cooldown e continua p/ reenvio abaixo.
-      if (inCooldown && !isTesting) {
+      if (inCooldown) {
         this.logger.log(
           `bot SIMPLE ${bot.id} em cooldown p/ contato ${ctx.contactId} ` +
           `(último envio=${lastSent ? new Date(lastSent).toISOString() : '-'}, faltam ${
@@ -351,14 +359,6 @@ export class BotEngineService {
           status: 'cooldown',
           currentStep: null,
         };
-      }
-
-      if (inCooldown && isTesting) {
-        this.logger.debug(
-          `bot SIMPLE ${bot.id} em testing — cooldown ignorado p/ teste iterativo (contato ${ctx.contactId}, último envio=${
-            lastSent ? new Date(lastSent).toISOString() : '-'
-          })`,
-        );
       }
 
       // Cooldown esgotado — RE-ENVIA o step 1 (cria nova sessão? não: reusa

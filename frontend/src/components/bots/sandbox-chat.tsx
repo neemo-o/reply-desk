@@ -13,7 +13,7 @@ const FINAL_STATUS_LABEL: Record<SandboxResult["finalStatus"], string> = {
   waiting: "Aguardando resposta",
   error: "Erro",
   offline: "Fora do horário",
-  cooldown: "Em cooldown (12h)",
+  cooldown: "Em cooldown",
 };
 
 const FINAL_STATUS_BADGE: Record<
@@ -323,7 +323,7 @@ export function SandboxChat({
             result.finalStatus === "routed") && (
             <p className="px-1 text-center text-xs text-muted-foreground/80">
               {result.finalStatus === "cooldown"
-                ? "Bot em cooldown de 12h — não responderá até o prazo esgotar."
+                ? "Bot em cooldown — não responderá até o prazo esgotar."
                 : "Sessão do bot encerrada — ele não responderá a novas mensagens."}
             </p>
           )}

@@ -35,6 +35,7 @@ export interface MessageContentFormProps {
   value: Record<string, unknown>;
   onChange: (next: Record<string, unknown>) => void;
   allowHandoff: boolean;
+  allowedTypes?: AllowedTypes;
   disabled?: boolean;
 }
 
@@ -44,9 +45,12 @@ export function MessageContentForm({
   value,
   onChange,
   allowHandoff,
+  allowedTypes,
   disabled,
 }: MessageContentFormProps) {
-  const allowed: AllowedTypes = allowHandoff
+  const allowed: AllowedTypes = allowedTypes
+    ? allowedTypes
+    : allowHandoff
     ? ["text", "list", "buttons", "media", "handoff"]
     : ["text", "list", "buttons", "media"];
 

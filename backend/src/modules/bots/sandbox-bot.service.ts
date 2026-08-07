@@ -79,9 +79,9 @@ export class SandboxBotService {
 
     // ─── SIMPLE: 1ª mensagem do usuário dispara o step 1 (1x por sessão).
     // Mensagens seguintes ficam em cooldown — o bot NÃO responde, igual ao
-    // bot-engine em produção (12h por contato). Aqui no sandbox só sinalizamos
-    // o estado 'cooldown', sem simular a passagem das 12h. O balão do usuário
-    // continua sendo emitido para o usuário poder confirmar o silêncio do bot.
+    // bot-engine em produção. Aqui no sandbox só sinalizamos o estado
+    // 'cooldown', sem simular a passagem do tempo. O balão do usuário continua
+    // sendo emitido para o usuário poder confirmar o silêncio do bot.
     if (bot.type === "SIMPLE") {
       const validated = validateStepContent(
         firstStep.tipoMensagem,
@@ -106,7 +106,7 @@ export class SandboxBotService {
           responded = true;
           finalStatus = "finished";
         } else {
-          // Em cooldown: bot em silêncio (na vida real, respeita 12h).
+          // Em cooldown: bot em silêncio (na vida real, respeita cooldown configurado).
           finalStatus = "cooldown";
         }
       }
