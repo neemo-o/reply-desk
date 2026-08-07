@@ -1,15 +1,15 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { Prisma } from '@prisma/client';
-import { PrismaService } from '../../../common/prisma/prisma.service';
-import { EvolutionService } from '../../../common/evolution/evolution.service';
+import { Injectable, Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { Prisma } from "@prisma/client";
+import { PrismaService } from "../../../common/prisma/prisma.service";
+import { EvolutionService } from "../../../common/evolution/evolution.service";
 import {
   EvolutionMessageParser,
   ParsedIncomingMessage,
-} from '../../../common/evolution/evolution-message-parser.service';
-import { RealtimeService } from '../../realtime/realtime.service';
-import { isUuid } from '../../../common/utils/security';
-import { phonesEqual } from '../../../common/utils/phone-normalize';
+} from "../../../common/evolution/evolution-message-parser.service";
+import { RealtimeService } from "../../realtime/realtime.service";
+import { isUuid } from "../../../common/utils/security";
+import { phonesEqual } from "../../../common/utils/phone-normalize";
 import {
   ValidatedStepContent,
   ListContent,
@@ -17,8 +17,8 @@ import {
   MediaContent,
   TextContent,
   HandoffContent,
-} from '../broadcast/step-content.validator';
-import { isOpenAt, parseBusinessHours } from '../broadcast/business-hours';
+} from "../broadcast/step-content.validator";
+import { isOpenAt, parseBusinessHours } from "../broadcast/business-hours";
 
 export interface BotInboundContext {
   whatsappSessionId: string;
@@ -69,7 +69,7 @@ export class BotEngineService {
     private readonly configService: ConfigService,
   ) {
     const cooldownHours =
-      this.configService.get<number>('evolution.simpleCooldownHours') ?? 12;
+      this.configService.get<number>("evolution.simpleCooldownHours") ?? 12;
     this.simpleCooldownMs = Math.max(0, cooldownHours) * 60 * 60 * 1000;
   }
 
@@ -116,8 +116,8 @@ export class BotEngineService {
       where: {
         id: settings.activeBotId,
         tenantId: ctx.tenantId,
-        status: { in: ['active', 'testing'] },
-        type: { in: ['SIMPLE', 'AGENTS'] },
+        status: { in: ["active", "testing"] },
+        type: { in: ["SIMPLE", "AGENTS"] },
       },
       select: {
         id: true,
@@ -157,7 +157,7 @@ export class BotEngineService {
       const dup = await tx.messageLog.findFirst({
         where: {
           externalId: ctx.externalId,
-          direction: 'inbound',
+          direction: "inbound",
           botId: bot.id,
         },
         select: { id: true },
@@ -171,22 +171,25 @@ export class BotEngineService {
         tenantId: ctx.tenantId,
         botId: bot.id,
         contactId: ctx.contactId,
-        direction: 'inbound',
+        direction: "inbound",
         type: ctx.message.type,
         content: {
           text: ctx.message.text,
           selectedId: ctx.message.selectedId,
         } as unknown as Prisma.InputJsonValue,
-        status: 'received',
+        status: "received",
         ...(ctx.externalId ? { externalId: ctx.externalId } : {}),
       },
     });
 
     // 4. Modo testing — só responde ao testContactPhone.
-    if (bot.status === 'testing') {
-      if (!bot.testContactPhone || !phonesEqual(ctx.phone, bot.testContactPhone)) {
+    if (bot.status === "testing") {
+      if (
+        !bot.testContactPhone ||
+        !phonesEqual(ctx.phone, bot.testContactPhone)
+      ) {
         this.logger.log(
-          `bot ${bot.id} em testing — contato ${ctx.phone} ignorado (esperado ${bot.testContactPhone ?? '-'})`,
+          `bot ${bot.id} em testing — contato ${ctx.phone} ignorado (esperado ${bot.testContactPhone ?? "-"})`,
         );
         return null;
       }
@@ -195,7 +198,7 @@ export class BotEngineService {
     // 5. Fora de horário — só AGENTS honra o horário de atendimento.
     //    Bots SIMPLE não usam horário: enviam a única mensagem sempre que acionados,
     //    então a mensagem fora do horário nunca se aplica e não é verificada.
-    if (bot.type !== 'SIMPLE') {
+    if (bot.type !== "SIMPLE") {
       const offlineSent = await this.handleBusinessHours(tx, bot, ctx);
       if (offlineSent) {
         return null;
@@ -204,19 +207,19 @@ export class BotEngineService {
 
     // 6. Carrega/recupera sessão.
     let session = await tx.botSession.findFirst({
-      where: { botId: bot.id, contactId: ctx.contactId, status: 'active' },
+      where: { botId: bot.id, contactId: ctx.contactId, status: "active" },
       include: { currentStep: true },
     });
 
     // 7. SIMPLE: só step 1, sem condições/triggers multi-step.
-    if (bot.type === 'SIMPLE') {
+    if (bot.type === "SIMPLE") {
       // 🔒 Bug 3 — Cooldown: precisa também da última sessão não-active
       // (finished/cooldown/routed) para checar se pode re-enviar.
       const anySession = session
         ? session
         : await tx.botSession.findFirst({
             where: { botId: bot.id, contactId: ctx.contactId },
-            orderBy: { updatedAt: 'desc' },
+            orderBy: { updatedAt: "desc" },
             select: { id: true, status: true, lastSentAt: true },
           });
       return this.handleSimpleInbound(tx, bot, ctx, anySession);
@@ -228,7 +231,7 @@ export class BotEngineService {
       if (!triggerHit) return null;
       const firstStep = await tx.botStep.findFirst({
         where: { botId: bot.id, ordem: 1 },
-        orderBy: { ordem: 'asc' },
+        orderBy: { ordem: "asc" },
       });
       if (!firstStep) {
         this.logger.warn(`bot ${bot.id} sem step inicial — trigger ignorado`);
@@ -240,7 +243,7 @@ export class BotEngineService {
           contactId: ctx.contactId,
           tenantId: ctx.tenantId,
           currentStepId: firstStep.id,
-          status: 'active',
+          status: "active",
           lastSentAt: new Date(),
         },
         include: { currentStep: true },
@@ -255,7 +258,7 @@ export class BotEngineService {
     if (!session.currentStep) {
       const finished = await tx.botSession.update({
         where: { id: session.id },
-        data: { status: 'finished', currentStepId: null },
+        data: { status: "finished", currentStepId: null },
         include: { currentStep: true },
       });
       return this.toSessionSummary(finished, bot.id);
@@ -290,10 +293,13 @@ export class BotEngineService {
         tenantId: ctx.tenantId,
         botId: bot.id,
         contactId: ctx.contactId,
-        direction: 'outbound',
-        type: 'text',
-        content: { type: 'text', text: welcome } as unknown as Prisma.InputJsonValue,
-        status: 'pending',
+        direction: "outbound",
+        type: "text",
+        content: {
+          type: "text",
+          text: welcome,
+        } as unknown as Prisma.InputJsonValue,
+        status: "pending",
       },
     });
   }
@@ -314,21 +320,33 @@ export class BotEngineService {
    */
   private async handleSimpleInbound(
     tx: Prisma.TransactionClient,
-    bot: { id: string; name: string; testContactPhone: string | null; status: string },
+    bot: {
+      id: string;
+      name: string;
+      testContactPhone: string | null;
+      status: string;
+    },
     ctx: BotInboundContext,
     existing: { id: string; status: string; lastSentAt?: Date | null } | null,
-  ): Promise<{ id: string; botId: string; status: string; currentStep: { ordem: number } | null } | null> {
+  ): Promise<{
+    id: string;
+    botId: string;
+    status: string;
+    currentStep: { ordem: number } | null;
+  } | null> {
     const COOLDOWN_MS = this.simpleCooldownMs;
 
     // 🔒 Bug 3 — Se já existe sessão (active/finished/cooldown/routed),
     // respeita o cooldown._sessões não-active significam que o fluxo já
     // rodou (active=em fluxo, finished=concluído, routed=handoff, cooldown=idle).
     if (existing) {
-      const lastSent = existing.lastSentAt ? new Date(existing.lastSentAt).getTime() : null;
+      const lastSent = existing.lastSentAt
+        ? new Date(existing.lastSentAt).getTime()
+        : null;
       const now = Date.now();
       const inCooldown = lastSent !== null && now - lastSent < COOLDOWN_MS;
 
-      if (existing.status === 'active') {
+      if (existing.status === "active") {
         // Sessão em fluxo (não deveria acontecer em SIMPLE, mas segurança):
         // não re-envia, mantém ativa — o usuário deve responder ao step atual.
         return {
@@ -344,19 +362,19 @@ export class BotEngineService {
       if (inCooldown) {
         this.logger.log(
           `bot SIMPLE ${bot.id} em cooldown p/ contato ${ctx.contactId} ` +
-          `(último envio=${lastSent ? new Date(lastSent).toISOString() : '-'}, faltam ${
-            Math.ceil((COOLDOWN_MS - (now - (lastSent ?? 0))) / 60000)
-          } min) — não reenvia`,
+            `(último envio=${lastSent ? new Date(lastSent).toISOString() : "-"}, faltam ${Math.ceil(
+              (COOLDOWN_MS - (now - (lastSent ?? 0))) / 60000,
+            )} min) — não reenvia`,
         );
         // Marca status cooldown para diagnóstico (transição válida: finished → cooldown).
         await tx.botSession.update({
           where: { id: existing.id },
-          data: { status: 'cooldown' },
+          data: { status: "cooldown" },
         });
         return {
           id: existing.id,
           botId: bot.id,
-          status: 'cooldown',
+          status: "cooldown",
           currentStep: null,
         };
       }
@@ -365,7 +383,7 @@ export class BotEngineService {
       // a existente, setando status finished e lastSentAt=now).
       const step = await tx.botStep.findFirst({
         where: { botId: bot.id, ordem: 1 },
-        orderBy: { ordem: 'asc' },
+        orderBy: { ordem: "asc" },
       });
       if (!step) {
         this.logger.warn(`bot SIMPLE ${bot.id} sem step ordem=1`);
@@ -373,13 +391,13 @@ export class BotEngineService {
       }
       this.logger.debug(
         `🤖 handleSimpleInbound — reenviando step 1 (sessão existente ${existing.id}) ` +
-        `tipoMensagem=${step.tipoMensagem} conteudo=${JSON.stringify(step.conteudo).slice(0, 500)}`,
+          `tipoMensagem=${step.tipoMensagem} conteudo=${JSON.stringify(step.conteudo).slice(0, 500)}`,
       );
       const updated = await tx.botSession.update({
         where: { id: existing.id },
         data: {
           currentStepId: step.id,
-          status: 'finished',
+          status: "finished",
           lastSentAt: new Date(),
         },
         include: { currentStep: true },
@@ -392,20 +410,24 @@ export class BotEngineService {
     // Sem sessão prévia — primeiro contato. Cria sessão e envia step 1.
     const step = await tx.botStep.findFirst({
       where: { botId: bot.id, ordem: 1 },
-      orderBy: { ordem: 'asc' },
+      orderBy: { ordem: "asc" },
     });
     if (!step) {
-      this.logger.warn(`🤖 handleSimpleInbound — bot SIMPLE ${bot.id} sem step ordem=1 (não há mensagem p/ enviar)`);
+      this.logger.warn(
+        `🤖 handleSimpleInbound — bot SIMPLE ${bot.id} sem step ordem=1 (não há mensagem p/ enviar)`,
+      );
       return null;
     }
-    this.logger.debug(`🤖 handleSimpleInbound — criando BotSession e enviando step 1 (bot ${bot.id} step ${step.id} ordem=${step.ordem})`);
+    this.logger.debug(
+      `🤖 handleSimpleInbound — criando BotSession e enviando step 1 (bot ${bot.id} step ${step.id} ordem=${step.ordem})`,
+    );
     const created = await tx.botSession.create({
       data: {
         botId: bot.id,
         contactId: ctx.contactId,
         tenantId: ctx.tenantId,
         currentStepId: step.id,
-        status: 'finished',
+        status: "finished",
         lastSentAt: new Date(),
       },
       include: { currentStep: true },
@@ -481,10 +503,13 @@ export class BotEngineService {
         tenantId: ctx.tenantId,
         botId: bot.id,
         contactId: ctx.contactId,
-        direction: 'outbound',
-        type: 'text',
-        content: { type: 'text', text: offlineMessage } as unknown as Prisma.InputJsonValue,
-        status: 'pending',
+        direction: "outbound",
+        type: "text",
+        content: {
+          type: "text",
+          text: offlineMessage,
+        } as unknown as Prisma.InputJsonValue,
+        status: "pending",
       },
     });
     return true;
@@ -496,7 +521,12 @@ export class BotEngineService {
       | { id: string; status: string; currentStep?: { ordem: number } | null }
       | null,
     botId: string,
-  ): { id: string; botId: string; status: string; currentStep: { ordem: number } | null } | null {
+  ): {
+    id: string;
+    botId: string;
+    status: string;
+    currentStep: { ordem: number } | null;
+  } | null {
     if (!session) return null;
     return {
       id: session.id,
@@ -515,7 +545,7 @@ export class BotEngineService {
       where: {
         sessionId: whatsappSessionId,
         contactId,
-        status: { not: 'closed' },
+        status: { not: "closed" },
         assignedUser: { not: null },
       },
       select: { id: true },
@@ -530,10 +560,14 @@ export class BotEngineService {
   ): Promise<boolean> {
     const triggers = await tx.botTrigger.findMany({ where: { botId } });
     if (triggers.length === 0) return false;
-    const text = (message.text ?? '').toLowerCase().trim();
+    const text = (message.text ?? "").toLowerCase().trim();
     for (const t of triggers) {
-      if (t.tipo === 'first_message') return true;
-      if (t.tipo === 'keyword' && t.valor && text.includes(t.valor.toLowerCase())) {
+      if (t.tipo === "first_message") return true;
+      if (
+        t.tipo === "keyword" &&
+        t.valor &&
+        text.includes(t.valor.toLowerCase())
+      ) {
         return true;
       }
     }
@@ -560,8 +594,13 @@ export class BotEngineService {
 
     // HANDOFF: NÃO envia mensagem normal ao contato; eventualmente envia
     // `conteudo.message` (texto de despedida) e transfere para humano.
-    if (step.tipoMensagem === 'handoff') {
-      await this.performHandoff(tx, session.id, ctx, conteudo as HandoffContent);
+    if (step.tipoMensagem === "handoff") {
+      await this.performHandoff(
+        tx,
+        session.id,
+        ctx,
+        conteudo as HandoffContent,
+      );
       return;
     }
 
@@ -572,10 +611,10 @@ export class BotEngineService {
         botId: step.botId,
         botSessionId: session.id,
         contactId: ctx.contactId,
-        direction: 'outbound',
+        direction: "outbound",
         type: step.tipoMensagem,
         content: step.conteudo as unknown as Prisma.InputJsonValue,
-        status: 'pending',
+        status: "pending",
       },
     });
     // 🔒 Bug 3 — Atualiza lastSentAt para suportar cooldown (futuro p/ AGENTS
@@ -615,10 +654,13 @@ export class BotEngineService {
           tenantId: ctx.tenantId,
           botSessionId: sessionId,
           contactId: ctx.contactId,
-          direction: 'outbound',
-          type: 'text',
-          content: { type: 'text', text: conteudo.message } as unknown as Prisma.InputJsonValue,
-          status: 'pending',
+          direction: "outbound",
+          type: "text",
+          content: {
+            type: "text",
+            text: conteudo.message,
+          } as unknown as Prisma.InputJsonValue,
+          status: "pending",
         },
       });
     }
@@ -629,7 +671,7 @@ export class BotEngineService {
       where: {
         sessionId: ctx.whatsappSessionId,
         contactId: ctx.contactId,
-        status: { not: 'closed' },
+        status: { not: "closed" },
       },
       select: { id: true, assignedUser: true },
     });
@@ -638,7 +680,7 @@ export class BotEngineService {
         where: {
           tenantId: ctx.tenantId,
           userId: assignUserId,
-          status: 'active',
+          status: "active",
         },
         select: { userId: true },
       });
@@ -657,7 +699,7 @@ export class BotEngineService {
     // Marca BotSession como 'routed'.
     await tx.botSession.update({
       where: { id: sessionId },
-      data: { status: 'routed', currentStepId: null },
+      data: { status: "routed", currentStepId: null },
     });
   }
 
@@ -674,20 +716,30 @@ export class BotEngineService {
       } | null;
     },
     ctx: BotInboundContext,
-  ): Promise<{ id: string; botId: string; status: string; currentStep: { ordem: number } | null } | null> {
+  ): Promise<{
+    id: string;
+    botId: string;
+    status: string;
+    currentStep: { ordem: number } | null;
+  } | null> {
     const step = session.currentStep;
     if (!step) return null;
 
-    if (!['text', 'list_response', 'buttons_response'].includes(ctx.message.type)) {
+    if (
+      !["text", "list_response", "buttons_response"].includes(ctx.message.type)
+    ) {
       return this.advance(tx, session, step.botId, step.fallbackStepOrder, ctx);
     }
 
     const condicoes =
-      (step.condicoesProximo as unknown as { match: string; stepOrder: number }[]) ?? [];
+      (step.condicoesProximo as unknown as {
+        match: string;
+        stepOrder: number;
+      }[]) ?? [];
     const reply =
-      ctx.message.type === 'text'
-        ? (ctx.message.text ?? '').toLowerCase().trim()
-        : (ctx.message.selectedId ?? '').toLowerCase().trim();
+      ctx.message.type === "text"
+        ? (ctx.message.text ?? "").toLowerCase().trim()
+        : (ctx.message.selectedId ?? "").toLowerCase().trim();
 
     for (const cond of condicoes) {
       const matchVal = cond.match.toLowerCase().trim();
@@ -704,11 +756,16 @@ export class BotEngineService {
     botId: string,
     nextOrder: number | null,
     ctx: BotInboundContext,
-  ): Promise<{ id: string; botId: string; status: string; currentStep: { ordem: number } | null } | null> {
+  ): Promise<{
+    id: string;
+    botId: string;
+    status: string;
+    currentStep: { ordem: number } | null;
+  } | null> {
     if (nextOrder === null || nextOrder === undefined) {
       const finished = await tx.botSession.update({
         where: { id: session.id },
-        data: { status: 'finished', currentStepId: null },
+        data: { status: "finished", currentStepId: null },
         include: { currentStep: true },
       });
       return this.toSessionSummary(finished, botId);
@@ -717,10 +774,12 @@ export class BotEngineService {
       where: { botId, ordem: nextOrder },
     });
     if (!nextStep) {
-      this.logger.warn(`bot ${botId}: step de ordem ${nextOrder} não encontrado; encerrando`);
+      this.logger.warn(
+        `bot ${botId}: step de ordem ${nextOrder} não encontrado; encerrando`,
+      );
       const finished = await tx.botSession.update({
         where: { id: session.id },
-        data: { status: 'finished', currentStepId: null },
+        data: { status: "finished", currentStepId: null },
         include: { currentStep: true },
       });
       return this.toSessionSummary(finished, botId);
@@ -742,7 +801,7 @@ export class BotEngineService {
     const sessionName = ctx.sessionName;
     const number = ctx.phone;
     try {
-      if (tipo === 'text') {
+      if (tipo === "text") {
         const c = conteudo as TextContent;
         // 🔒 Defensive: alguns steps legados podem ter sido gravados em formato
         // alternativo (ex.: { type:'text', value:'...' } ou { type:'text', texto:'...' }).
@@ -753,11 +812,11 @@ export class BotEngineService {
           (alt.value as string | undefined) ||
           (alt.texto as string | undefined) ||
           (alt.message as string | undefined) ||
-          '';
+          "";
         if (!text || text.trim().length === 0) {
           this.logger.error(
-            `step text sem propriedade "text" não-vazia — keys=${Object.keys(alt).join(',')} ` +
-            `conteudo=${JSON.stringify(conteudo).slice(0, 500)}`,
+            `step text sem propriedade "text" não-vazia — keys=${Object.keys(alt).join(",")} ` +
+              `conteudo=${JSON.stringify(conteudo).slice(0, 500)}`,
           );
           return;
         }
@@ -765,7 +824,7 @@ export class BotEngineService {
           `🤖 sendStepMessage text — text.length=${text.length} preview="${text.slice(0, 60)}"`,
         );
         await this.evolution.sendText(sessionName, { number, text });
-      } else if (tipo === 'list') {
+      } else if (tipo === "list") {
         const c = conteudo as ListContent;
         await this.evolution.sendList(sessionName, {
           number,
@@ -774,7 +833,7 @@ export class BotEngineService {
           buttonText: c.buttonText,
           sections: c.sections,
         });
-      } else if (tipo === 'buttons') {
+      } else if (tipo === "buttons") {
         const c = conteudo as ButtonsContent;
         await this.evolution.sendButtons(sessionName, {
           number,
@@ -782,21 +841,29 @@ export class BotEngineService {
           ...(c.footer ? { footer: c.footer } : {}),
           buttons: c.buttons,
         });
-      } else if (tipo === 'media') {
+      } else if (tipo === "media") {
         const c = conteudo as MediaContent;
-        if (c.mediaType === 'image') {
-          await this.evolution.sendImage(sessionName, { number, url: c.url, caption: c.caption });
-        } else if (c.mediaType === 'video') {
-          await this.evolution.sendVideo(sessionName, { number, url: c.url, caption: c.caption });
-        } else if (c.mediaType === 'audio') {
+        if (c.mediaType === "image") {
+          await this.evolution.sendImage(sessionName, {
+            number,
+            url: c.url,
+            caption: c.caption,
+          });
+        } else if (c.mediaType === "video") {
+          await this.evolution.sendVideo(sessionName, {
+            number,
+            url: c.url,
+            caption: c.caption,
+          });
+        } else if (c.mediaType === "audio") {
           await this.evolution.sendAudio(sessionName, { number, url: c.url });
-        } else if (c.mediaType === 'document') {
+        } else if (c.mediaType === "document") {
           await this.evolution.sendDocument(sessionName, {
             number,
             url: c.url,
-            filename: c.url.split('/').pop() ?? 'file',
+            filename: c.url.split("/").pop() ?? "file",
           });
-        } else if (c.mediaType === 'sticker') {
+        } else if (c.mediaType === "sticker") {
           await this.evolution.sendSticker(sessionName, { number, url: c.url });
         }
       }

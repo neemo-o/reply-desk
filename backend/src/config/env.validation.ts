@@ -1,10 +1,18 @@
-import { plainToInstance } from 'class-transformer';
-import { IsEnum, IsNumber, IsOptional, IsString, Matches, MinLength, validateSync } from 'class-validator';
+import { plainToInstance } from "class-transformer";
+import {
+  IsEnum,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Matches,
+  MinLength,
+  validateSync,
+} from "class-validator";
 
 enum Environment {
-  Development = 'development',
-  Production = 'production',
-  Test = 'test',
+  Development = "development",
+  Production = "production",
+  Test = "test",
 }
 
 class EnvironmentVariables {
@@ -18,7 +26,7 @@ class EnvironmentVariables {
   DATABASE_URL: string;
 
   @IsString()
-  REDIS_HOST: string = 'localhost';
+  REDIS_HOST: string = "localhost";
 
   @IsNumber()
   REDIS_PORT: number = 6379;
@@ -29,11 +37,15 @@ class EnvironmentVariables {
 
   // 🔒 S3 — Segredos JWT precisam de no mínimo 32 caracteres (256 bits de entropia mínima)
   @IsString()
-  @MinLength(32, { message: 'JWT_ACCESS_SECRET deve ter no mínimo 32 caracteres' })
+  @MinLength(32, {
+    message: "JWT_ACCESS_SECRET deve ter no mínimo 32 caracteres",
+  })
   JWT_ACCESS_SECRET!: string;
 
   @IsString()
-  @MinLength(32, { message: 'JWT_REFRESH_SECRET deve ter no mínimo 32 caracteres' })
+  @MinLength(32, {
+    message: "JWT_REFRESH_SECRET deve ter no mínimo 32 caracteres",
+  })
   JWT_REFRESH_SECRET!: string;
 
   @IsOptional()
@@ -69,12 +81,16 @@ class EnvironmentVariables {
   // O fail-closed de produção (bloco abaixo) valida HTTPS separadamente.
   @IsOptional()
   @IsString()
-  @Matches(/^https?:\/\//, { message: 'STRIPE_CHECKOUT_SUCCESS_URL deve começar com http:// ou https://' })
+  @Matches(/^https?:\/\//, {
+    message: "STRIPE_CHECKOUT_SUCCESS_URL deve começar com http:// ou https://",
+  })
   STRIPE_CHECKOUT_SUCCESS_URL?: string;
 
   @IsOptional()
   @IsString()
-  @Matches(/^https?:\/\//, { message: 'STRIPE_CHECKOUT_CANCEL_URL deve começar com http:// ou https://' })
+  @Matches(/^https?:\/\//, {
+    message: "STRIPE_CHECKOUT_CANCEL_URL deve começar com http:// ou https://",
+  })
   STRIPE_CHECKOUT_CANCEL_URL?: string;
 
   // 🔒 Evolution API — integração WhatsApp (sessões são externas ao DB)
@@ -88,7 +104,9 @@ class EnvironmentVariables {
 
   @IsOptional()
   @IsString()
-  @Matches(/^https?:\/\//, { message: 'EVOLUTION_WEBHOOK_BASE_URL deve começar com http:// ou https://' })
+  @Matches(/^https?:\/\//, {
+    message: "EVOLUTION_WEBHOOK_BASE_URL deve começar com http:// ou https://",
+  })
   EVOLUTION_WEBHOOK_BASE_URL?: string;
 
   // 🤖 Resposta automática placeholder (temporário)
@@ -128,7 +146,8 @@ class EnvironmentVariables {
   @IsOptional()
   @IsString()
   @Matches(/^[^@]+@[^@]+\.[^@]+|^.+<[^@]+@[^@]+\.[^@]+>$/, {
-    message: 'MAIL_FROM deve ser um e-mail válido ou formato "Nome <email@dominio.com>"',
+    message:
+      'MAIL_FROM deve ser um e-mail válido ou formato "Nome <email@dominio.com>"',
   })
   MAIL_FROM?: string;
 }
@@ -137,7 +156,9 @@ export function validate(config: Record<string, unknown>) {
   const validatedConfig = plainToInstance(EnvironmentVariables, config, {
     enableImplicitConversion: true,
   });
-  const errors = validateSync(validatedConfig, { skipMissingProperties: false });
+  const errors = validateSync(validatedConfig, {
+    skipMissingProperties: false,
+  });
 
   if (errors.length > 0) {
     throw new Error(errors.toString());
@@ -146,37 +167,60 @@ export function validate(config: Record<string, unknown>) {
   // 🔒 S3 fail-closed adicional em produção — secrets default nunca passam
   if (validatedConfig.NODE_ENV === Environment.Production) {
     if (
-      validatedConfig.JWT_ACCESS_SECRET.startsWith('change-me') ||
-      validatedConfig.JWT_REFRESH_SECRET.startsWith('change-me')
+      validatedConfig.JWT_ACCESS_SECRET.startsWith("change-me") ||
+      validatedConfig.JWT_REFRESH_SECRET.startsWith("change-me")
     ) {
-      throw new Error('JWT secrets default (change-me-*) não são permitidos em produção.');
-    }
-    if (!validatedConfig.CORS_ORIGINS) {
-      throw new Error('CORS_ORIGINS é obrigatório em produção — defina as origens permitidas separadas por vírgula.');
-    }
-    if (!validatedConfig.STRIPE_SECRET_KEY || !validatedConfig.STRIPE_WEBHOOK_SECRET) {
       throw new Error(
-        'STRIPE_SECRET_KEY e STRIPE_WEBHOOK_SECRET são obrigatórios em produção.',
+        "JWT secrets default (change-me-*) não são permitidos em produção.",
       );
     }
-    if (!validatedConfig.STRIPE_CHECKOUT_SUCCESS_URL || !validatedConfig.STRIPE_CHECKOUT_CANCEL_URL) {
-      throw new Error('STRIPE_CHECKOUT_SUCCESS_URL e STRIPE_CHECKOUT_CANCEL_URL são obrigatórios em produção.');
+    if (!validatedConfig.CORS_ORIGINS) {
+      throw new Error(
+        "CORS_ORIGINS é obrigatório em produção — defina as origens permitidas separadas por vírgula.",
+      );
+    }
+    if (
+      !validatedConfig.STRIPE_SECRET_KEY ||
+      !validatedConfig.STRIPE_WEBHOOK_SECRET
+    ) {
+      throw new Error(
+        "STRIPE_SECRET_KEY e STRIPE_WEBHOOK_SECRET são obrigatórios em produção.",
+      );
+    }
+    if (
+      !validatedConfig.STRIPE_CHECKOUT_SUCCESS_URL ||
+      !validatedConfig.STRIPE_CHECKOUT_CANCEL_URL
+    ) {
+      throw new Error(
+        "STRIPE_CHECKOUT_SUCCESS_URL e STRIPE_CHECKOUT_CANCEL_URL são obrigatórios em produção.",
+      );
     }
     // 🔒 Em produção, as URLs de checkout DEVEM ser HTTPS (não http://).
-    if (!validatedConfig.STRIPE_CHECKOUT_SUCCESS_URL.startsWith('https://')) {
-      throw new Error('STRIPE_CHECKOUT_SUCCESS_URL deve ser HTTPS em produção.');
+    if (!validatedConfig.STRIPE_CHECKOUT_SUCCESS_URL.startsWith("https://")) {
+      throw new Error(
+        "STRIPE_CHECKOUT_SUCCESS_URL deve ser HTTPS em produção.",
+      );
     }
-    if (!validatedConfig.STRIPE_CHECKOUT_CANCEL_URL.startsWith('https://')) {
-      throw new Error('STRIPE_CHECKOUT_CANCEL_URL deve ser HTTPS em produção.');
+    if (!validatedConfig.STRIPE_CHECKOUT_CANCEL_URL.startsWith("https://")) {
+      throw new Error("STRIPE_CHECKOUT_CANCEL_URL deve ser HTTPS em produção.");
     }
-    if (!validatedConfig.SMTP_HOST || !validatedConfig.SMTP_USER || !validatedConfig.SMTP_PASS) {
-      throw new Error('SMTP_HOST, SMTP_USER e SMTP_PASS são obrigatórios em produção (envio de OTP).');
+    if (
+      !validatedConfig.SMTP_HOST ||
+      !validatedConfig.SMTP_USER ||
+      !validatedConfig.SMTP_PASS
+    ) {
+      throw new Error(
+        "SMTP_HOST, SMTP_USER e SMTP_PASS são obrigatórios em produção (envio de OTP).",
+      );
     }
     // 🔒 P9 — Evolution API v2 é obrigatória em produção: sem ela as sessões
     // WhatsApp ficam sem integração. Em dev continua opcional.
-    if (!validatedConfig.EVOLUTION_API_URL || !validatedConfig.EVOLUTION_API_KEY) {
+    if (
+      !validatedConfig.EVOLUTION_API_URL ||
+      !validatedConfig.EVOLUTION_API_KEY
+    ) {
       throw new Error(
-        'EVOLUTION_API_URL e EVOLUTION_API_KEY são obrigatórios em produção (integração WhatsApp).',
+        "EVOLUTION_API_URL e EVOLUTION_API_KEY são obrigatórios em produção (integração WhatsApp).",
       );
     }
   }

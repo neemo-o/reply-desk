@@ -51,8 +51,8 @@ export function MessageContentForm({
   const allowed: AllowedTypes = allowedTypes
     ? allowedTypes
     : allowHandoff
-    ? ["text", "list", "buttons", "media", "handoff"]
-    : ["text", "list", "buttons", "media"];
+      ? ["text", "list", "buttons", "media", "handoff"]
+      : ["text", "list", "buttons", "media"];
 
   useEffect(() => {
     if (type === "media" && value.mediaType === undefined) {

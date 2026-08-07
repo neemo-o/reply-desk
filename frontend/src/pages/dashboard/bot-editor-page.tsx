@@ -43,7 +43,10 @@ const STATUS_LABEL: Record<BotStatus, string> = {
   inactive: "Inativo",
 };
 
-const STATUS_BADGE: Record<BotStatus, "secondary" | "warning" | "success" | "outline"> = {
+const STATUS_BADGE: Record<
+  BotStatus,
+  "secondary" | "warning" | "success" | "outline"
+> = {
   draft: "secondary",
   testing: "warning",
   active: "success",
@@ -100,7 +103,9 @@ export function BotEditorPage() {
         <Badge variant={bot.type === "SIMPLE" ? "outline" : "secondary"}>
           {bot.type === "SIMPLE" ? "Comum" : "Agentes"}
         </Badge>
-        <Badge variant={STATUS_BADGE[bot.status]}>{STATUS_LABEL[bot.status]}</Badge>
+        <Badge variant={STATUS_BADGE[bot.status]}>
+          {STATUS_LABEL[bot.status]}
+        </Badge>
 
         {/* Switch de status */}
         <div className="ml-auto flex items-center gap-1.5">
@@ -122,8 +127,14 @@ export function BotEditorPage() {
 
       <div className="space-y-6">
         <ConfigPanel botId={bot.id} bot={bot} />
-        {isAgents && <TriggersPanel botId={bot.id} triggers={bot.triggers ?? []} />}
-        <StepsPanel botId={bot.id} steps={bot.steps ?? []} isAgents={isAgents} />
+        {isAgents && (
+          <TriggersPanel botId={bot.id} triggers={bot.triggers ?? []} />
+        )}
+        <StepsPanel
+          botId={bot.id}
+          steps={bot.steps ?? []}
+          isAgents={isAgents}
+        />
       </div>
     </DashboardLayout>
   );
@@ -152,8 +163,8 @@ function ConfigPanel({ botId, bot }: { botId: string; bot: BotLike }) {
 
   const hasBusinessHours = Boolean(
     tenantSummary?.businessHours &&
-      tenantSummary.businessHours.days &&
-      tenantSummary.businessHours.days.length > 0,
+    tenantSummary.businessHours.days &&
+    tenantSummary.businessHours.days.length > 0,
   );
 
   const isAgents = bot.type === "AGENTS";
@@ -172,9 +183,15 @@ function ConfigPanel({ botId, bot }: { botId: string; bot: BotLike }) {
         id: botId,
         name: name.trim() || bot.name,
         description: description.trim() || null,
-        testContactPhone: digitsOnly && digitsOnly.length > 0 ? digitsOnly : null,
+        testContactPhone:
+          digitsOnly && digitsOnly.length > 0 ? digitsOnly : null,
       },
-      { onSuccess: () => { setDirty(false); toast.success("Configurações salvas."); } },
+      {
+        onSuccess: () => {
+          setDirty(false);
+          toast.success("Configurações salvas.");
+        },
+      },
     );
   }
 
@@ -207,7 +224,9 @@ function ConfigPanel({ botId, bot }: { botId: string; bot: BotLike }) {
 
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <Label htmlFor="cfg-name" className="text-xs">Nome</Label>
+            <Label htmlFor="cfg-name" className="text-xs">
+              Nome
+            </Label>
             <Input
               id="cfg-name"
               value={name}
@@ -215,7 +234,9 @@ function ConfigPanel({ botId, bot }: { botId: string; bot: BotLike }) {
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="cfg-desc" className="text-xs">Descrição</Label>
+            <Label htmlFor="cfg-desc" className="text-xs">
+              Descrição
+            </Label>
             <Input
               id="cfg-desc"
               value={description}
@@ -236,13 +257,17 @@ function ConfigPanel({ botId, bot }: { botId: string; bot: BotLike }) {
               inputMode="numeric"
             />
             <p className="text-xs text-muted-foreground">
-              DDI + DDD + número, sem "+". Ex: 5511999999999. Bot em
-              "testing" só responde a este número.
+              DDI + DDD + número, sem "+". Ex: 5511999999999. Bot em "testing"
+              só responde a este número.
             </p>
           </div>
         </div>
         <div className="flex justify-end">
-          <Button onClick={save} disabled={!dirty || updateBot.isPending} size="sm">
+          <Button
+            onClick={save}
+            disabled={!dirty || updateBot.isPending}
+            size="sm"
+          >
             <Save className="h-4 w-4" /> Salvar
           </Button>
         </div>
@@ -253,13 +278,25 @@ function ConfigPanel({ botId, bot }: { botId: string; bot: BotLike }) {
 
 // ─── Painel de gatilhos (somente AGENTS) ──────────────────────────────
 
-type TriggerLike = { id: string; tipo: "keyword" | "first_message"; valor: string | null };
+type TriggerLike = {
+  id: string;
+  tipo: "keyword" | "first_message";
+  valor: string | null;
+};
 
-function TriggersPanel({ botId, triggers }: { botId: string; triggers: TriggerLike[] }) {
+function TriggersPanel({
+  botId,
+  triggers,
+}: {
+  botId: string;
+  triggers: TriggerLike[];
+}) {
   const createTrigger = useCreateTrigger();
   const updateTrigger = useUpdateTrigger();
   const deleteTrigger = useDeleteTrigger();
-  const [newKind, setNewKind] = useState<"keyword" | "first_message">("keyword");
+  const [newKind, setNewKind] = useState<"keyword" | "first_message">(
+    "keyword",
+  );
   const [newVal, setNewVal] = useState("");
   const [editing, setEditing] = useState<Record<string, string>>({});
 
@@ -276,7 +313,14 @@ function TriggersPanel({ botId, triggers }: { botId: string; triggers: TriggerLi
     if (v === undefined) return;
     updateTrigger.mutate(
       { botId, triggerId: t.id, payload: { valor: v.trim() || null } },
-      { onSuccess: () => setEditing((s) => { const c = { ...s }; delete c[t.id]; return c; }) },
+      {
+        onSuccess: () =>
+          setEditing((s) => {
+            const c = { ...s };
+            delete c[t.id];
+            return c;
+          }),
+      },
     );
   }
 
@@ -302,7 +346,9 @@ function TriggersPanel({ botId, triggers }: { botId: string; triggers: TriggerLi
                 key={t.id}
                 className="flex items-center gap-2 rounded-md border bg-secondary/30 px-3 py-2"
               >
-                <Badge variant="outline" className="text-[10px]">{t.tipo}</Badge>
+                <Badge variant="outline" className="text-[10px]">
+                  {t.tipo}
+                </Badge>
                 {editing[t.id] !== undefined ? (
                   <>
                     <Input
@@ -476,7 +522,10 @@ function StepsPanel({
         ) : (
           <ul className="space-y-2">
             {steps.map((s) => (
-              <li key={s.id} className="rounded-md border bg-secondary/30 px-3 py-2">
+              <li
+                key={s.id}
+                className="rounded-md border bg-secondary/30 px-3 py-2"
+              >
                 <StepRow
                   botId={botId}
                   step={s}
@@ -509,7 +558,9 @@ function StepsPanel({
               <div className="space-y-3">
                 {isAgents ? (
                   <div className="space-y-1.5">
-                    <Label htmlFor="new-order" className="text-xs">Ordem</Label>
+                    <Label htmlFor="new-order" className="text-xs">
+                      Ordem
+                    </Label>
                     <Input
                       id="new-order"
                       type="number"
@@ -572,10 +623,18 @@ function StepRow({
 }) {
   const updateStep = useUpdateStep();
 
-  const [draftType, setDraftType] = useState<StepMessageType>(step.tipoMensagem);
-  const [draftContent, setDraftContent] = useState<Record<string, unknown>>(step.conteudo);
-  const [draftFallback, setDraftFallback] = useState<number | null>(step.fallbackStepOrder);
-  const [draftCond, setDraftCond] = useState<BotStepCondition[]>(step.condicoesProximo ?? []);
+  const [draftType, setDraftType] = useState<StepMessageType>(
+    step.tipoMensagem,
+  );
+  const [draftContent, setDraftContent] = useState<Record<string, unknown>>(
+    step.conteudo,
+  );
+  const [draftFallback, setDraftFallback] = useState<number | null>(
+    step.fallbackStepOrder,
+  );
+  const [draftCond, setDraftCond] = useState<BotStepCondition[]>(
+    step.condicoesProximo ?? [],
+  );
 
   // Resync local quando o step muda externamente (refetch).
   useEffect(() => {
@@ -583,7 +642,14 @@ function StepRow({
     setDraftContent(step.conteudo);
     setDraftFallback(step.fallbackStepOrder);
     setDraftCond(step.condicoesProximo ?? []);
-  }, [step.id, step.ordem, step.tipoMensagem, step.conteudo, step.fallbackStepOrder, step.condicoesProximo]);
+  }, [
+    step.id,
+    step.ordem,
+    step.tipoMensagem,
+    step.conteudo,
+    step.fallbackStepOrder,
+    step.condicoesProximo,
+  ]);
 
   function buildPayload(): UpdateStepPayloadMinimal {
     return {
@@ -660,7 +726,8 @@ function StepRow({
                 <Label className="text-xs">Condições de próximo step</Label>
                 {draftCond.length === 0 ? (
                   <p className="text-xs text-muted-foreground">
-                    Sem condições — o próximo step (por ordem) é executado. Handoff finaliza.
+                    Sem condições — o próximo step (por ordem) é executado.
+                    Handoff finaliza.
                   </p>
                 ) : (
                   <ul className="space-y-1.5">
@@ -729,7 +796,9 @@ function StepRow({
                     value={draftFallback ?? ""}
                     onChange={(e) =>
                       setDraftFallback(
-                        e.target.value ? parseInt(e.target.value, 10) || null : null,
+                        e.target.value
+                          ? parseInt(e.target.value, 10) || null
+                          : null,
                       )
                     }
                     placeholder="ex: 2"
@@ -756,4 +825,3 @@ function StepRow({
     </div>
   );
 }
-
