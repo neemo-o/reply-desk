@@ -17,9 +17,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Plus, Trash2 } from "lucide-react";
+import { useTenantMembers } from "@/hooks/use-tenant";
 import type { StepMessageType } from "@/types/bots";
 
 type AllowedTypes = StepMessageType[];
+
+interface HandoffActionConfig {
+  assignUserId?: string;
+  queue?: string;
+  department?: string;
+}
 
 const TYPE_LABEL: Record<StepMessageType, string> = {
   text: "Texto",
@@ -284,18 +291,25 @@ export function MessageContentForm({
       )}
 
       {type === "handoff" && (
-        <div className="space-y-1.5">
-          <Label htmlFor="mc-hmsg" className="text-xs">
-            Mensagem antes do handoff
-          </Label>
-          <textarea
-            id="mc-hmsg"
-            value={(value.text as string | undefined) ?? ""}
-            onChange={(e) => patch({ text: e.target.value })}
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="mc-hmsg" className="text-xs">
+              Mensagem antes do handoff
+            </Label>
+            <textarea
+              id="mc-hmsg"
+              value={(value.text as string | undefined) ?? ""}
+              onChange={(e) => patch({ text: e.target.value })}
+              disabled={disabled}
+              rows={2}
+              placeholder="Vou transferir você para um atendente humano…"
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+            />
+          </div>
+          <HandoffAssignee
+            value={(value.actionConfig as HandoffActionConfig | undefined) ?? {}}
+            onChange={(actionConfig) => patch({ actionConfig })}
             disabled={disabled}
-            rows={2}
-            placeholder="Vou transferir você para um atendente humano…"
-            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
           />
           <p className="text-xs text-muted-foreground">
             O step final com handoff transfere o atendimento para um humano —
@@ -311,6 +325,54 @@ interface ButtonItem {
   id: string;
   title: string;
   description?: string;
+}
+
+/**
+ * Atribuição de handoff — define para quem a conversa vai quando o step de
+ * handoff é executado (`conteudo.actionConfig.assignUserId`). Sem seleção,
+ * a conversa fica na fila geral sem dono.
+ */
+function HandoffAssignee({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: HandoffActionConfig;
+  onChange: (next: HandoffActionConfig) => void;
+  disabled?: boolean;
+}) {
+  const { data: members } = useTenantMembers();
+  const activeMembers = (members ?? []).filter((m) => m.status === "active");
+
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor="mc-hassign" className="text-xs">
+        Atribuir a (opcional)
+      </Label>
+      <select
+        id="mc-hassign"
+        value={value.assignUserId ?? ""}
+        onChange={(e) =>
+          onChange({
+            ...value,
+            assignUserId: e.target.value || undefined,
+          })
+        }
+        disabled={disabled || activeMembers.length === 0}
+        className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <option value="">— fila geral (sem atribuição) —</option>
+        {activeMembers.map((m) => (
+          <option key={m.id} value={m.userId}>
+            {m.user.name} · {m.role.name}
+          </option>
+        ))}
+      </select>
+      <p className="text-xs text-muted-foreground">
+        A conversa é atribuída a este membro quando o handoff acontece.
+      </p>
+    </div>
+  );
 }
 
 function normalizeButtons(raw: unknown): ButtonItem[] {

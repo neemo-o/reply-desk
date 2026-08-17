@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { useParams, useNavigate, Link } from "react-router-dom";
 import {
   ArrowLeft,
   Plus,
@@ -8,6 +8,7 @@ import {
   Edit2,
   X,
   AlertTriangle,
+  FlaskConical,
 } from "lucide-react";
 import { toast } from "sonner";
 import { DashboardLayout } from "@/layouts/dashboard-layout";
@@ -198,7 +199,16 @@ function ConfigPanel({ botId, bot }: { botId: string; bot: BotLike }) {
   return (
     <Card>
       <CardContent className="space-y-4 p-5">
-        <h3 className="text-sm font-semibold">Configurações</h3>
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold">Configurações</h3>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => navigate("/dashboard/sandbox")}
+          >
+            <FlaskConical className="h-4 w-4" /> Testar no sandbox
+          </Button>
+        </div>
 
         {!hasBusinessHours && isAgents && (
           <div className="flex items-start gap-3 rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
@@ -257,8 +267,9 @@ function ConfigPanel({ botId, bot }: { botId: string; bot: BotLike }) {
               inputMode="numeric"
             />
             <p className="text-xs text-muted-foreground">
-              DDI + DDD + número, sem "+". Ex: 5511999999999. Bot em "testing"
-              só responde a este número.
+              DDI + DDD + número, sem "+". Ex: 5511999999999. Em "Em teste", o
+              bot só responde a este número no WhatsApp — ou teste à vontade no
+              Sandbox, que simula a conversa sem enviar mensagens reais.
             </p>
           </div>
         </div>
@@ -514,11 +525,49 @@ function StepsPanel({
         </div>
 
         {steps.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            {isAgents
-              ? "Nenhum step. Adicione abaixo."
-              : "Nenhum step. Adicione a única mensagem abaixo."}
-          </p>
+          isAgents ? (
+            <div className="space-y-1.5 rounded-md border border-dashed bg-secondary/20 p-3 text-xs text-muted-foreground">
+              <p className="font-medium text-foreground">
+                Como montar o fluxo de Agentes
+              </p>
+              <ol className="list-decimal space-y-1 pl-4">
+                <li>
+                  Defina um gatilho acima (palavra-chave ou "primeira
+                  mensagem") — sem gatilho, o bot responde à primeira mensagem.
+                </li>
+                <li>
+                  Adicione os steps em ordem — a ordem define a sequência do
+                  fluxo.
+                </li>
+                <li>
+                  Em cada step, use <strong>condições</strong> para desviar
+                  conforme a resposta exata do usuário.
+                </li>
+                <li>
+                  O <strong>fallback</strong> define para onde ir quando
+                  nenhuma condição casar (sem fallback, o fluxo finaliza).
+                </li>
+                <li>
+                  Termine com um step <strong>Handoff</strong> para transferir
+                  a conversa a um atendente humano.
+                </li>
+              </ol>
+              <p>
+                Dica: teste o fluxo no{" "}
+                <Link
+                  to="/dashboard/sandbox"
+                  className="font-medium text-foreground underline underline-offset-2 hover:text-primary"
+                >
+                  Sandbox
+                </Link>
+                .
+              </p>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Nenhum step. Adicione a única mensagem abaixo.
+            </p>
+          )
         ) : (
           <ul className="space-y-2">
             {steps.map((s) => (
@@ -529,6 +578,7 @@ function StepsPanel({
                 <StepRow
                   botId={botId}
                   step={s}
+                  allSteps={steps}
                   isEditing={Boolean(editing[s.id])}
                   onToggleEdit={() =>
                     setEditing((e) => ({ ...e, [s.id]: !e[s.id] }))
@@ -605,6 +655,7 @@ type UpdateStepPayloadMinimal = {
 function StepRow({
   botId,
   step,
+  allSteps,
   isEditing,
   onToggleEdit,
   onDelete,
@@ -614,6 +665,7 @@ function StepRow({
 }: {
   botId: string;
   step: BotStep;
+  allSteps: StepLike[];
   isEditing: boolean;
   onToggleEdit: () => void;
   onDelete: () => void;
@@ -635,6 +687,33 @@ function StepRow({
   const [draftCond, setDraftCond] = useState<BotStepCondition[]>(
     step.condicoesProximo ?? [],
   );
+
+  // Opções interativas do step (botões/listas) para montar condições sem
+  // precisar conhecer os IDs internos usados pelo motor na comparação.
+  const interactiveOptions = useMemo(() => {
+    if (draftType === "buttons" && Array.isArray(draftContent.buttons)) {
+      return (draftContent.buttons as unknown[])
+        .filter((b) => Boolean(b) && typeof b === "object")
+        .map((b) => ({
+          id: String((b as { id?: unknown }).id ?? ""),
+          label: String((b as { title?: unknown }).title ?? ""),
+        }))
+        .filter((o) => o.id && o.label);
+    }
+    if (draftType === "list" && Array.isArray(draftContent.sections)) {
+      const first = draftContent.sections[0] as { rows?: unknown[] } | undefined;
+      if (first && Array.isArray(first.rows)) {
+        return first.rows
+          .filter((r) => Boolean(r) && typeof r === "object")
+          .map((r) => ({
+            id: String((r as { id?: unknown }).id ?? ""),
+            label: String((r as { title?: unknown }).title ?? ""),
+          }))
+          .filter((o) => o.id && o.label);
+      }
+    }
+    return [];
+  }, [draftType, draftContent]);
 
   // Resync local quando o step muda externamente (refetch).
   useEffect(() => {
@@ -707,6 +786,8 @@ function StepRow({
         </div>
       </div>
 
+      {!isEditing && isAgents && <FlowSummary step={step} allSteps={allSteps} />}
+
       {isEditing && (
         <div className="mt-3 space-y-3 border-t pt-3">
           <MessageContentForm
@@ -724,15 +805,40 @@ function StepRow({
               {/* Condições de próximo (AGENTS) */}
               <div className="space-y-1.5">
                 <Label className="text-xs">Condições de próximo step</Label>
+                <p className="text-xs text-muted-foreground">
+                  A resposta do usuário é comparada de forma exata (ignora
+                  maiúsculas e espaços). Quando nenhuma condição casar, o
+                  fallback é executado — sem fallback, o fluxo finaliza.
+                </p>
                 {draftCond.length === 0 ? (
                   <p className="text-xs text-muted-foreground">
-                    Sem condições — o próximo step (por ordem) é executado.
-                    Handoff finaliza.
+                    Sem condições — o fluxo segue para o fallback (ou finaliza
+                    se não houver fallback).
                   </p>
                 ) : (
                   <ul className="space-y-1.5">
                     {draftCond.map((c, i) => (
-                      <li key={i} className="flex items-center gap-2">
+                      <li key={i} className="flex flex-wrap items-center gap-2">
+                        {interactiveOptions.length > 0 && (
+                          <select
+                            value=""
+                            onChange={(e) => {
+                              if (!e.target.value) return;
+                              const next = [...draftCond];
+                              next[i] = { ...next[i], match: e.target.value };
+                              setDraftCond(next);
+                            }}
+                            className="h-7 rounded-md border bg-background px-1 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                            aria-label="Inserir opção do step"
+                          >
+                            <option value="">Inserir opção…</option>
+                            {interactiveOptions.map((o) => (
+                              <option key={o.id} value={o.id}>
+                                {o.label}
+                              </option>
+                            ))}
+                          </select>
+                        )}
                         <Input
                           value={c.match}
                           onChange={(e) => {
@@ -740,11 +846,14 @@ function StepRow({
                             next[i] = { ...next[i], match: e.target.value };
                             setDraftCond(next);
                           }}
-                          placeholder="match"
+                          placeholder={
+                            interactiveOptions.length > 0
+                              ? "ou digite o texto exato"
+                              : "texto exato da resposta"
+                          }
                           className="h-7 flex-1"
                         />
-                        <Input
-                          type="number"
+                        <select
                           value={c.stepOrder}
                           onChange={(e) => {
                             const next = [...draftCond];
@@ -754,9 +863,15 @@ function StepRow({
                             };
                             setDraftCond(next);
                           }}
-                          placeholder="ordem"
-                          className="h-7 w-20"
-                        />
+                          className="h-7 rounded-md border bg-background px-1 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          aria-label="Step de destino"
+                        >
+                          {allSteps.map((s) => (
+                            <option key={s.id} value={s.ordem}>
+                              Step #{s.ordem}
+                            </option>
+                          ))}
+                        </select>
                         <Button
                           size="icon"
                           variant="ghost"
@@ -787,12 +902,11 @@ function StepRow({
               {/* Fallback */}
               <div className="space-y-1.5">
                 <Label htmlFor={`fb-${step.id}`} className="text-xs">
-                  Fallback (ordem do step, opcional)
+                  Fallback (step de destino, opcional)
                 </Label>
                 <div className="flex items-center gap-2">
-                  <Input
+                  <select
                     id={`fb-${step.id}`}
-                    type="number"
                     value={draftFallback ?? ""}
                     onChange={(e) =>
                       setDraftFallback(
@@ -801,11 +915,17 @@ function StepRow({
                           : null,
                       )
                     }
-                    placeholder="ex: 2"
-                    className="h-7 w-28"
-                  />
+                    className="h-7 rounded-md border bg-background px-1 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  >
+                    <option value="">— finaliza o fluxo —</option>
+                    {allSteps.map((s) => (
+                      <option key={s.id} value={s.ordem}>
+                        Step #{s.ordem}
+                      </option>
+                    ))}
+                  </select>
                   <span className="text-xs text-muted-foreground">
-                    Step executado quando nenhuma condição bater.
+                    Executado quando nenhuma condição casar.
                   </span>
                 </div>
               </div>
@@ -821,6 +941,57 @@ function StepRow({
             </Button>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Resumo de navegação do step (somente AGENTS) ─────────────────────────
+
+/**
+ * Exibe as condições/fallback de um step no modo colapsado, permitindo
+ * enxergar o fluxo sem entrar em edição. Marca referências a steps que não
+ * existem mais (dados legados/edição manual) para evitar fluxos quebrados.
+ */
+function FlowSummary({
+  step,
+  allSteps,
+}: {
+  step: BotStep;
+  allSteps: StepLike[];
+}) {
+  const conds = step.condicoesProximo ?? [];
+  const missing = (ordem: number) => !allSteps.some((s) => s.ordem === ordem);
+
+  if (conds.length === 0 && step.fallbackStepOrder == null) {
+    return (
+      <p className="mt-1 text-[11px] text-muted-foreground">
+        Sem condições e sem fallback — o fluxo finaliza após este step.
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
+      {conds.map((c, i) => (
+        <span key={i} className="rounded-md bg-secondary/60 px-1.5 py-0.5">
+          "{c.match}" → step #{c.stepOrder}
+          {missing(c.stepOrder) && (
+            <span className="ml-1 font-medium text-destructive">
+              (inexistente)
+            </span>
+          )}
+        </span>
+      ))}
+      {step.fallbackStepOrder != null && (
+        <span className="rounded-md bg-secondary/60 px-1.5 py-0.5">
+          fallback → step #{step.fallbackStepOrder}
+          {missing(step.fallbackStepOrder) && (
+            <span className="ml-1 font-medium text-destructive">
+              (inexistente)
+            </span>
+          )}
+        </span>
       )}
     </div>
   );

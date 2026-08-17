@@ -122,13 +122,31 @@ export class SandboxBotService {
     }
 
     // ─── AGENTS ───────────────────────────────────────────────────
-    const startMessage = dto.startMessage ?? "";
+    // A 1ª mensagem do usuário atua como gatilho (startMessage) e NÃO é
+    // consumida como resposta ao step 1 — espelha a produção. Se o client
+    // enviar `startMessage` separado, todas as userMessages são respostas.
+    const hasSeparateStart =
+      typeof dto.startMessage === "string" && dto.startMessage.trim().length > 0;
+    const startMessage =
+      (hasSeparateStart ? dto.startMessage : (userMsgs[0] ?? "")) ?? "";
+
+    // Balão da mensagem-gatilho: mantém o histórico visível nas reexecuções
+    // (o fluxo inteiro é re-renderizado a cada envio).
+    if (!hasSeparateStart && userMsgs.length > 0) {
+      events.push({
+        direction: "user",
+        type: "text",
+        text: userMsgs[0],
+        timestamp: now(),
+      });
+    }
 
     // 1. Avalia trigger.
     const triggerHit = this.matchTrigger(bot.triggers, startMessage);
     if (!triggerHit) {
       return {
         events: [
+          ...events,
           {
             direction: "bot",
             type: "no_trigger",
@@ -141,7 +159,7 @@ export class SandboxBotService {
       };
     }
 
-    // 2. Executa step 1.
+    // 2. Executa step 1 e aguarda a resposta do usuário.
     let currentStep = firstStep;
     const visited: number[] = [];
     this.emitStep(
@@ -155,20 +173,19 @@ export class SandboxBotService {
     );
     visited.push(currentStep.ordem);
 
-    // Estado do fluxo: 'active' (ainda responde), 'finished', 'routed' ou 'error'.
+    // Estado do fluxo: 'active' (aguarda resposta), 'finished', 'routed' ou
+    // 'error'. Um step sem condições/fallback ainda fica 'active' até o
+    // usuário responder — igual ao motor de produção.
     let fluxStatus: "active" | "finished" | "routed" | "error" = "active";
-    const stepConds =
-      (currentStep.condicoesProximo as unknown as { match: string }[] | null) ??
-      [];
     if (currentStep.tipoMensagem === "handoff") {
       fluxStatus = "routed";
-    } else if (stepConds.length === 0) {
-      fluxStatus = "finished";
     }
 
-    // 3. Itera sobre userMessages — sempre emite o balão do usuário; só
-    // responde se o fluxo ainda estiver 'active'.
-    for (const userMsg of userMsgs) {
+    // 3. Itera sobre as respostas (a 1ª mensagem foi consumida como gatilho) —
+    // sempre emite o balão do usuário; só responde se o fluxo ainda estiver
+    // 'active'.
+    const responses = hasSeparateStart ? userMsgs : userMsgs.slice(1);
+    for (const userMsg of responses) {
       events.push({
         direction: "user",
         type: "text",
@@ -205,11 +222,6 @@ export class SandboxBotService {
           fluxStatus = "routed";
           continue;
         }
-        const conds =
-          (currentStep.condicoesProximo as unknown as
-            | { match: string }[]
-            | null) ?? [];
-        if (conds.length === 0) fluxStatus = "finished";
         continue;
       }
       if (next === null) {
@@ -236,11 +248,6 @@ export class SandboxBotService {
         fluxStatus = "routed";
         continue;
       }
-      const conds =
-        (currentStep.condicoesProximo as unknown as
-          | { match: string }[]
-          | null) ?? [];
-      if (conds.length === 0) fluxStatus = "finished";
     }
 
     // 'active' ao final do loop = o fluxo ainda espera a próxima resposta.
@@ -253,7 +260,9 @@ export class SandboxBotService {
     triggers: { tipo: string; valor: string | null }[],
     message: string,
   ): boolean {
-    if (triggers.length === 0) return false;
+    // 🔒 P1 — Sem gatilhos = primeira mensagem (implícito), alinhado à UI e ao
+    // motor de produção.
+    if (triggers.length === 0) return true;
     const msg = message.toLowerCase().trim();
     for (const t of triggers) {
       if (t.tipo === "first_message") return true;
@@ -397,6 +406,8 @@ export class SandboxBotService {
         direction: "bot",
         type: "handoff",
         text: c.message ?? "Conversa transferida para atendimento humano.",
+        // Expõe o destinatário/roteamento configurado para conferência no teste.
+        ...(c.actionConfig ? { payload: { actionConfig: c.actionConfig } } : {}),
         timestamp,
       });
     }

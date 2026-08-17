@@ -41,7 +41,7 @@ const TYPE_LABEL: Record<BotType, string> = {
 
 const TYPE_DESCRIPTION: Record<BotType, string> = {
   SIMPLE: "Envia uma única mensagem e finaliza.",
-  AGENTS: "Fluxo multi-step com gatilhos e handoff.",
+  AGENTS: "Fluxo multi-step com gatilhos, condições e handoff para humano.",
   AUTO: "Dispara broadcasts agendados para uma lista de contatos.",
 };
 
@@ -79,6 +79,7 @@ export function BotsPage() {
   const [name, setName] = useState("");
   const [type, setType] = useState<BotType>(TYPE_DEFAULTS);
   const [description, setDescription] = useState("");
+  const [testPhone, setTestPhone] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   // 🔒 Bug 5 — Atualiza em tempo real o número de sessões ativas por bot
@@ -106,11 +107,15 @@ export function BotsPage() {
         name: name.trim(),
         type,
         description: description.trim() || undefined,
+        ...(type !== "AUTO" && testPhone.trim()
+          ? { testContactPhone: testPhone.replace(/\D/g, "") }
+          : {}),
       },
       {
         onSuccess: (bot) => {
           setName("");
           setDescription("");
+          setTestPhone("");
           setCreateOpen(false);
           if (bot.type === "AUTO") navigate(`/dashboard/broadcasts/${bot.id}`);
           else navigate(`/dashboard/bots/${bot.id}`);
@@ -245,6 +250,26 @@ export function BotsPage() {
                 placeholder="Para que serve este bot"
               />
             </div>
+
+            {type !== "AUTO" && (
+              <div className="space-y-1.5">
+                <Label htmlFor="bphone" className="text-xs">
+                  Telefone para testes (opcional)
+                </Label>
+                <Input
+                  id="bphone"
+                  value={testPhone}
+                  onChange={(e) => setTestPhone(e.target.value)}
+                  placeholder="5511999999999"
+                  inputMode="numeric"
+                  className="font-mono text-sm"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Se preenchido, o bot já nasce em "Em teste" e só responde a
+                  este número no WhatsApp.
+                </p>
+              </div>
+            )}
           </div>
 
           <SheetFooter className="flex-row justify-end gap-2">

@@ -559,7 +559,10 @@ export class BotEngineService {
     message: ParsedIncomingMessage,
   ): Promise<boolean> {
     const triggers = await tx.botTrigger.findMany({ where: { botId } });
-    if (triggers.length === 0) return false;
+    // 🔒 P1 — Sem gatilhos configurados = gatilho implícito de "primeira
+    // mensagem" (igual à promessa da UI). Antes, zero gatilhos tornava o bot
+    // AGENTS permanentemente mudo.
+    if (triggers.length === 0) return true;
     const text = (message.text ?? "").toLowerCase().trim();
     for (const t of triggers) {
       if (t.tipo === "first_message") return true;
