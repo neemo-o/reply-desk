@@ -74,7 +74,14 @@ export class WhatsappSessionsProcessor extends WorkerHost {
 
     const session = await this.prisma.whatsappSession.findUnique({
       where: { id: sessionId },
-      select: { id: true, sessionName: true, phone: true, status: true, tenantId: true },
+      select: {
+        id: true,
+        sessionName: true,
+        phone: true,
+        status: true,
+        tenantId: true,
+        settings: { select: { activeBotId: true } },
+      },
     });
     if (!session) {
       this.logger.warn(`[job=${job.id}] Sessão ${sessionId} não encontrada no DB — abortando`);
@@ -82,6 +89,33 @@ export class WhatsappSessionsProcessor extends WorkerHost {
     }
     if (session.status === 'connected') {
       this.logger.log(`[job=${job.id}] Sessão ${sessionId} já conectada — skip`);
+      return;
+    }
+
+    // 🔒 S24 — Revalida o bot vinculado antes de criar/recriar a instância
+    // na Evolution. O endpoint HTTP (/connect ou /reconnect) já validou no
+    // momento do enqueue, mas BullMQ roda em worker separado e pode haver
+    // delay entre enqueue e execução (fila, retry com backoff). Se o bot
+    // foi inativado/deletado nesse intervalo, abortamos a criação da
+    // instância — não faz sentido gerar QR para uma sessão cujo bot não
+    // vai responder. Em vez de lançar (que faria BullMQ re-tentar 3x só
+    // pra falhar igual), ajustamos status e logamos, mantendo a sessão no
+    // estado anterior sem instância órfã na Evolution.
+    const bot = session.settings?.activeBotId
+      ? await this.prisma.bot.findFirst({
+          where: { id: session.settings.activeBotId, tenantId: session.tenantId },
+          select: { id: true, status: true },
+        })
+      : null;
+    if (!bot || (bot.status !== 'active' && bot.status !== 'testing')) {
+      this.logger.warn(
+        `[job=${job.id}] Sessão ${sessionId} não tem bot ativo (activeBotId=${session.settings?.activeBotId}, botStatus=${bot?.status ?? 'null'}) — abortando connect-session`,
+      );
+      await this.sessionsService.updateStatus(sessionId, 'disconnected');
+      await this.sessionsService.logEvent(sessionId, session.tenantId, 'disconnected', {
+        message: `Conexão abortada: o bot vinculado está inativo ou foi excluído. ` +
+          `Ative o bot (ou selecione outro) e gere um novo QR Code.`,
+      });
       return;
     }
 

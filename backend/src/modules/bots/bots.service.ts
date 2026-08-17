@@ -20,6 +20,7 @@ import { isUuid } from "../../common/utils/security";
 import { WhatsappSessionsService } from "../whatsapp-sessions/whatsapp-sessions.service";
 import { InstanceStatusService } from "./instance-status.service";
 import { RealtimeService } from "../realtime/realtime.service";
+import { BroadcastsService } from "../broadcast/broadcasts.service";
 
 /**
  * 🤖 BotsService — CRUD de bots (3 tipos: SIMPLE, AGENTS, AUTO).
@@ -47,6 +48,8 @@ export class BotsService {
     private readonly sessionsService: WhatsappSessionsService,
     private readonly instanceStatus: InstanceStatusService,
     private readonly realtime: RealtimeService,
+    @Inject(forwardRef(() => BroadcastsService))
+    private readonly broadcastsService: BroadcastsService,
   ) {}
 
   // ─── Bots ────────────────────────────────────────────────────────────
@@ -178,22 +181,26 @@ export class BotsService {
     }
 
     // 🔒 Bug 4 — Detecta mudança de status que desativa o bot (active/testing →
-    // draft/inactive). Quando isto acontece, sessões WhatsApp ativas
-    // conectadas a este bot devem ser desconectadas (logout Evolution) e o
-    // usuário notificado via WS com o motivo.
+    // draft/inactive). O efeito depende do tipo do bot:
+    //   - SIMPLE/AGENTS: sessões WhatsApp vinculadas são desconectadas
+    //     (logout Evolution) — comportamento histórico.
+    //   - AUTO (campanha): sessões NÃO são desconectadas. Ficam em modo
+    //     standby: o WhatsApp permanece conectado, mas o activeBotId é
+    //     desvinculado (nada é enviado/processado). Campanhas agendadas
+    //     são pausadas.
     const nextStatus = dto.status ?? bot.status;
     const wasActive = bot.status === "active" || bot.status === "testing";
     const willBeInactive = nextStatus === "draft" || nextStatus === "inactive";
     if (wasActive && willBeInactive) {
       // Dispara em background — não bloqueia o update do bot (logout pode ser lento).
-      this.cascadeDisconnectSessions(
-        bot.id,
+      this.handleBotDeactivated(
+        bot,
         tenantId,
         bot.status,
         nextStatus,
       ).catch((err) =>
         this.logger.error(
-          `cascadeDisconnectSessions(bot=${bot.id}) falhou: ${(err as Error).message}`,
+          `handleBotDeactivated(bot=${bot.id}) falhou: ${(err as Error).message}`,
         ),
       );
     }
@@ -229,10 +236,94 @@ export class BotsService {
   }
 
   /**
+   * 🤖 S24 — Roteia a ação de desativação do bot conforme o tipo:
+   *   - SIMPLE/AGENTS → cascadeDisconnectSessions (logout Evolution) —
+   *     comportamento histórico.
+   *   - AUTO (campanha) → sessões em standby (desvincula activeBotId,
+   *     mantém WhatsApp conectado, nada é processado) + pausa campanhas.
+   * Chamado em background (fire-and-forget) — não bloqueia o update/delete.
+   */
+  private async handleBotDeactivated(
+    bot: { id: string; type: string; status: string },
+    tenantId: string,
+    previousStatus: string,
+    newStatus: string,
+  ): Promise<void> {
+    if (bot.type === "AUTO") {
+      await this.detachSessionsToStandby(bot.id, tenantId, previousStatus, newStatus);
+      const paused = await this.broadcastsService
+        .pauseByBot(tenantId, bot.id)
+        .catch((err) => {
+          this.logger.error(
+            `pauseByBot(bot=${bot.id}) falhou: ${(err as Error).message}`,
+          );
+          return 0;
+        });
+      if (paused > 0) {
+        this.logger.log(
+          `Bot AUTO ${bot.id} inativado; ${paused} campanha(s) pausada(s)`,
+        );
+      }
+      return;
+    }
+    await this.cascadeDisconnectSessions(bot.id, tenantId, previousStatus, newStatus);
+  }
+
+  /**
+   * 🤖 S24 — "Modo standby" para sessões de bot de campanha (AUTO): desvincula
+   * o `activeBotId` da sessão (activeBotId = null) SEM desconectar o WhatsApp.
+   * A sessão permanece `connected`, mas como não tem bot vinculado, o engine
+   * de inbound ignora e o broadcast não acha sessão vinculada — nada é
+   * enviado nem processado. Logamos um SessionEvent explicando o estado.
+   */
+  private async detachSessionsToStandby(
+    botId: string,
+    tenantId: string,
+    previousStatus: string,
+    newStatus: string,
+  ): Promise<void> {
+    const sessions = await this.prisma.whatsappSession.findMany({
+      where: { tenantId, settings: { activeBotId: botId } },
+      select: { id: true, name: true },
+    });
+    if (sessions.length === 0) return;
+
+    await this.prisma.sessionSettings.updateMany({
+      where: { activeBotId: botId },
+      data: { activeBotId: null },
+    });
+
+    const reason =
+      `Bot de campanha inativado (status: ${previousStatus} → ${newStatus}). ` +
+      `A sessão ficou em modo standby: o WhatsApp permanece conectado, mas ` +
+      `nenhuma mensagem será enviada/processada até que você vincule um bot ativo a esta sessão.`;
+    for (const session of sessions) {
+      try {
+        await this.sessionsService.logEvent(
+          session.id,
+          tenantId,
+          "updated",
+          { message: reason },
+        );
+      } catch (err) {
+        this.logger.warn(
+          `detachSessionsToStandby: falha ao logar evento da sessão ${session.id}: ${(err as Error).message}`,
+        );
+      }
+    }
+    this.logger.log(
+      `Bot AUTO ${botId}: ${sessions.length} sessão(ões) em standby (sem bot vinculado)`,
+    );
+  }
+
+  /**
    * 🔒 Bug 4 — Desconecta as sessões WhatsApp ativas que usam este bot como
    * bot ativo nos `SessionSettings`. Registrado em `session_events` (logs de
    * conexão) com mensagem legível explicando o motivo. WS emite instance.status
    * para a UI mostrar banner alertando ao usuário.
+   *
+   * Apenas para bots SIMPLE/AGENTS — bots de campanha (AUTO) usam
+   * `detachSessionsToStandby` (mantém WhatsApp conectado).
    *
    * Chamado em background (fire-and-forget) — não bloqueia o update do bot.
    */
@@ -293,18 +384,20 @@ export class BotsService {
 
   async remove(tenantId: string, id: string) {
     const bot = await this.findOne(tenantId, id);
-    // 🔒 Bug 4 — Desconecta sessões ativas que usavam este bot. Como o bot
-    // será deletado (cascade de SessionSettings.activeBotId=SetNull), o
-    // SessionSettings.activeBotId vira null e a sessão fica "sem bot".
-    // Desconectamos antes para avisar o usuário com motivo claro.
-    this.cascadeDisconnectSessions(
-      bot.id,
+    // 🔒 Bug 4 — Ao remover o bot, o efeito nas sessões vinculadas depende
+    // do tipo:
+    //   - SIMPLE/AGENTS: desconecta as sessões antes de deletar (logout).
+    //   - AUTO (campanha): sessões ficam em standby (connected, sem bot) e
+    //     campanhas agendadas são pausadas. O cascade de
+    //     SessionSettings.activeBotId=SetNull desvincula automaticamente.
+    this.handleBotDeactivated(
+      bot,
       tenantId,
       bot.status,
       "deleted",
     ).catch((err) =>
       this.logger.error(
-        `cascadeDisconnectSessions(bot=${bot.id}, delete) falhou: ${(err as Error).message}`,
+        `handleBotDeactivated(bot=${bot.id}, delete) falhou: ${(err as Error).message}`,
       ),
     );
     await this.prisma.bot.delete({ where: { id: bot.id } });

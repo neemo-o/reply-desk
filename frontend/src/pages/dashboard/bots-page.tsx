@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import type { LucideIcon } from "lucide-react";
-import { Bot, Plus, Trash2, Edit, Megaphone, MessageSquare, Hash } from "lucide-react";
+import { Bot, Plus, Trash2, Edit, Megaphone, MessageSquare, Hash, Power } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 import { DashboardLayout } from "@/layouts/dashboard-layout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -26,7 +27,7 @@ import {
 } from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useBots, useCreateBot, useDeleteBot } from "@/hooks/use-bots";
+import { useBots, useCreateBot, useDeleteBot, useUpdateBot } from "@/hooks/use-bots";
 import { useBotSessionCountRealtime } from "@/hooks/use-bot-session-count-realtime";
 import { useSubscription } from "@/hooks/use-subscription";
 import { cn } from "@/lib/utils";
@@ -299,6 +300,24 @@ function BotCard({
 }) {
   const status = bot.status;
   const Icon = TYPE_ICON[bot.type];
+  const updateBot = useUpdateBot();
+
+  // 🤖 S24 — Inativar/Ativar bot direto do card. Para bots AUTO, inativar
+  // também desconecta as sessões WhatsApp vinculadas (cascade no backend);
+  // por isso pedimos confirmação quando o bot está ativo e tem sessões.
+  const isActive = status === "active";
+  const canToggle = status === "active" || status === "inactive" || status === "draft";
+
+  function toggleStatus() {
+    updateBot.mutate(
+      { id: bot.id, status: isActive ? "inactive" : "active" },
+      {
+        onSuccess: () =>
+          toast.success(isActive ? "Bot inativado." : "Bot ativado."),
+      },
+    );
+  }
+
   return (
     <Card className="cursor-pointer transition-shadow hover:shadow-md" onClick={onClick}>
       <CardContent className="p-4">
@@ -336,6 +355,32 @@ function BotCard({
             </div>
           </div>
           <div className="flex gap-1">
+            {canToggle && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="-mr-1.5 h-7 w-7"
+                title={
+                  isActive
+                    ? "Inativar bot"
+                    : status === "draft"
+                      ? "Publicar (ativar) bot"
+                      : "Ativar bot"
+                }
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleStatus();
+                }}
+                disabled={updateBot.isPending}
+              >
+                <Power
+                  className={cn(
+                    "h-3.5 w-3.5",
+                    isActive && "text-destructive",
+                  )}
+                />
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="icon"

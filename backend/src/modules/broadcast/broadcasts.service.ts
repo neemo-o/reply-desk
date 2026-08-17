@@ -1,5 +1,7 @@
 import {
   BadRequestException,
+  forwardRef,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
@@ -11,6 +13,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { isUuid } from '../../common/utils/security';
 import { validateStepContent } from '../bots/broadcast/step-content.validator';
+import { BotsService } from '../bots/bots.service';
 import {
   BROADCAST_QUEUE,
 } from '../queue/queue.module';
@@ -36,6 +39,8 @@ export class BroadcastsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    @Inject(forwardRef(() => BotsService))
+    private readonly botsService: BotsService,
     @InjectQueue(BROADCAST_QUEUE) private readonly broadcastQueue: Queue,
   ) {
     this.maxPerHour = parseInt(
@@ -52,10 +57,18 @@ export class BroadcastsService {
    * Cria um agendamento de broadcast (bot do tipo AUTO).
    * Antes de persistir:
    *   1. valida que o bot é AUTO e do tenant.
-   *   2. valida content (validateStepContent).
-   *   3. valida ContactList + conta contatos.
-   *   4. valida limite: count × sendDelaySec → msgs/hora não pode exceder maxPerHour.
-   *   5. enfileira job único para treat no startAt (recorrência gerencia o job internamente).
+   *   2. 🤖 valida que existe sessão WhatsApp conectada vinculada ao bot
+   *      (SessionSettings.activeBotId = bot.id). O broadcast dispara pela
+   *      sessão vinculada — se não existir, o usuário precisa criá-la /
+   *      vinculá-la antes de agendar (guia a mensagem de erro).
+   *   3. valida content (validateStepContent).
+   *   4. valida ContactList + conta contatos.
+   *   5. valida limite: count × sendDelaySec → msgs/hora não pode exceder maxPerHour.
+   *   6. 🤖 Auto-ativa o bot (draft/inactive → active) se necessário,
+   *      respeitando o limite de bots ativos do plano (assertCanActivateBot).
+   *      O bot fica ativo até a campanha concluir (em recurrence=ONCE) ou
+   *      até o usuário inativar manualmente (ver botão "Inativar" na UI).
+   *   7. enfileira job único para treat no startAt (recorrência gerencia o job internamente).
    */
   async create(tenantId: string, dto: CreateBroadcastDto) {
     if (!isUuid(dto.botId)) throw new NotFoundException('Bot não encontrado');
@@ -64,10 +77,69 @@ export class BroadcastsService {
       select: { id: true, status: true, testContactPhone: true },
     });
     if (!bot) throw new NotFoundException('Bot AUTO não encontrado');
+
+    // 🤖 S24 — Exige uma sessão WhatsApp conectada vinculada ao bot AUTO
+    // (SessionSettings.activeBotId = bot.id). O processor vai disparar os
+    // envios pela sessão vinculada — sem ela, não há como enviar mensagens
+    // com a identidade do bot. Sem isso o processor de broadcast pegaria a
+    // "primeira sessão conectada do tenant", podendo usar uma sessão de
+    // outro bot (ver gate simétrico em BroadcastProcessor.runBroadcast).
+    if (bot.status !== 'testing') {
+      const linkedSession = await this.prisma.whatsappSession.findFirst({
+        where: {
+          tenantId,
+          status: 'connected',
+          settings: { activeBotId: bot.id },
+        },
+        select: { id: true, name: true },
+      });
+      if (!linkedSession) {
+        // Diagnóstico para mensagem útil: sessões vinculadas a este bot
+        // (em qualquer status) e total de sessões do tenant.
+        const linkedAnyStatus = await this.prisma.whatsappSession.findFirst({
+          where: { tenantId, settings: { activeBotId: bot.id } },
+          select: { id: true, name: true, status: true },
+        });
+        if (linkedAnyStatus) {
+          throw new BadRequestException(
+            `A sessão vinculada a este bot não está conectada (status: ${linkedAnyStatus.status}). ` +
+              `Conecte-a em "WhatsApp" antes de agendar a campanha.`,
+          );
+        }
+        const anySession = await this.prisma.whatsappSession.findFirst({
+          where: { tenantId },
+          select: { id: true },
+        });
+        throw new BadRequestException(
+          anySession
+            ? `Nenhuma sessão WhatsApp conectada está vinculada a este bot. ` +
+              `Vá em "WhatsApp" → sessão → Configurações → Bot ativo, selecione este bot e conecte o QR. ` +
+              `Depois retorne aqui para agendar a campanha.`
+            : `Não há nenhuma sessão WhatsApp criada neste workspace. ` +
+              `Crie uma sessão em "WhatsApp", vincule este bot a ela ` +
+              `(Configurações da sessão → Bot ativo) e conecte o QR antes de agendar.`,
+        );
+      }
+    }
+
+    // 🤖 Auto-ativa o bot se necessário (draft/inactive → active), pois o
+    // ciclo de vida agora é: o bot fica ativo enquanto há campanha ativa.
+    // Em testing, mantemos testing (não auto-ativamos) — o usuário continua
+    // disparando só para o testContactPhone.
     if (bot.status === 'draft' || bot.status === 'inactive') {
-      throw new BadRequestException(
-        `Bot está ${bot.status} — ative-o (ou coloque em testing) antes de agendar.`,
-      );
+      try {
+        await this.botsService.update(tenantId, bot.id, { status: 'active' });
+        this.logger.log(
+          `Bot ${bot.id} auto-ativado ao agendar broadcast (status: ${bot.status} → active)`,
+        );
+        // Atualiza status local em memória p/ os próximos cálculos
+        bot.status = 'active';
+      } catch (err) {
+        // Propaga a mensagem do assertCanActivateBot (ForbiddenException),
+        // ex.: "Limite de bots ativos do plano X atingido (N)" — rejeita a
+        // criação sem deixar o bot em estado inconsistente.
+        throw err;
+      }
     }
 
     const contactList = await this.prisma.contactList.findFirst({
@@ -204,6 +276,38 @@ export class BroadcastsService {
       await job.remove().catch(() => { /* race OK */ });
     }
     return updated;
+  }
+
+  /**
+   * 🤖 S24 — Pausa todas as campanhas scheduled/running de um bot (chamado
+   * quando um bot de campanha AUTO é inativado). Garante que nenhuma
+   * mensagem seja enviada enquanto o bot estiver inativo. Remove também os
+   * jobs BullMQ delayed para não disparar no horário agendado.
+   */
+  async pauseByBot(tenantId: string, botId: string): Promise<number> {
+    const broadcasts = await this.prisma.broadcastSchedule.findMany({
+      where: { tenantId, botId, status: { in: ['scheduled', 'running'] } },
+      select: { id: true },
+    });
+    if (broadcasts.length === 0) return 0;
+
+    await this.prisma.broadcastSchedule.updateMany({
+      where: { tenantId, botId, status: { in: ['scheduled', 'running'] } },
+      data: { status: 'paused' },
+    });
+
+    // Remove jobs atrasados (delayed) da fila — não dispara mais.
+    for (const b of broadcasts) {
+      const job = await this.broadcastQueue.getJob(`broadcast-${b.id}-run`);
+      if (job && (await job.getState()) === 'delayed') {
+        await job.remove().catch(() => { /* race OK */ });
+      }
+      const resumeJob = await this.broadcastQueue.getJob(`broadcast-${b.id}-resume`);
+      if (resumeJob) {
+        await resumeJob.remove().catch(() => { /* race OK */ });
+      }
+    }
+    return broadcasts.length;
   }
 
   async resume(tenantId: string, id: string) {

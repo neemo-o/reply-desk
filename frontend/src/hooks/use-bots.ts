@@ -29,6 +29,10 @@ export function useBot(id: string) {
     queryKey: ["bots", tenant?.id, id],
     queryFn: () => botsService.getOne(id),
     enabled: isAuthenticated && Boolean(tenant) && Boolean(id),
+    // 🤖 S24 — Refetch periódico para refletir mudanças de status que
+    // acontecem no backend sem ação do usuário (ex.: bot AUTO auto-inativado
+    // após campanha única concluir; auto-ativado ao agendar).
+    refetchInterval: 30_000,
   });
 }
 

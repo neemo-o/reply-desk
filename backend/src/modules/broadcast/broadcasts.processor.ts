@@ -7,6 +7,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { EvolutionService } from '../../common/evolution/evolution.service';
 import { BROADCAST_QUEUE } from '../queue/queue.module';
 import { RealtimeService } from '../realtime/realtime.service';
+import { BotsService } from '../bots/bots.service';
 import {
   ValidatedStepContent,
   TextContent,
@@ -43,6 +44,7 @@ export class BroadcastProcessor extends WorkerHost {
     private readonly evolution: EvolutionService,
     private readonly config: ConfigService,
     private readonly realtime: RealtimeService,
+    private readonly botsService: BotsService,
   ) {
     super();
     this.sendDelayMs =
@@ -105,18 +107,31 @@ export class BroadcastProcessor extends WorkerHost {
       });
     }
 
-    // Identifica sessão WhatsApp ativa DA MESMA TENANT conectada. Em MVP,
-    // broadcast dispara pela primeira sessão connected do tenant (1:1).
+    // 🤖 S24 — Identifica sessão WhatsApp ATIVA e VINCULADA a este bot via
+    // SessionSettings.activeBotId. Antes o broadcast disparava pela
+    // "primeira sessão connected do tenant", o que podia usar uma sessão
+    // associada a outro bot (multi-bot no mesmo workspace). Agora exigimos
+    // vínculo explícito (gate simétrico ao de BroadcastsService.create):
+    // se não há sessão vinculada, marcamos como paused e o usuário é
+    // avisado pela UI (status no BroadcastList + WS broadcast.progress).
     const session = await this.prisma.whatsappSession.findFirst({
-      where: { tenantId: broadcast.tenantId, status: 'connected' },
-      select: { sessionName: true },
+      where: {
+        tenantId: broadcast.tenantId,
+        status: 'connected',
+        settings: { activeBotId: broadcast.botId },
+      },
+      select: { sessionName: true, name: true },
     });
     if (!session) {
-      this.logger.warn(`Broadcast ${broadcastId}: nenhuma sessão conectada no tenant — marcando como paused`);
-      await this.prisma.broadcastSchedule.update({
+      this.logger.warn(
+        `Broadcast ${broadcastId}: nenhuma sessão conectada vinculada ` +
+          `ao bot ${broadcast.botId} — marcando como paused`,
+      );
+      const updated = await this.prisma.broadcastSchedule.update({
         where: { id: broadcastId },
         data: { status: 'paused' },
       });
+      this.emitProgress(broadcast.tenantId, updated);
       return;
     }
 
@@ -213,10 +228,26 @@ export class BroadcastProcessor extends WorkerHost {
   private async maybeReschedule(broadcastId: string) {
     const broadcast = await this.prisma.broadcastSchedule.findUnique({
       where: { id: broadcastId },
-      select: { recurrence: true, startAt: true, status: true, contactListId: true },
+      select: { recurrence: true, startAt: true, status: true, contactListId: true, botId: true, tenantId: true },
     });
     if (!broadcast) return;
-    if (broadcast.recurrence === 'ONCE') return;
+
+    // 🤖 S24 — Auto-inativar bot quando campanha única (ONCE) conclui.
+    // O ciclo de vida agora é: o bot fica ativo enquanto há campanha
+    // ativa; quando a campanha única termina, ele vira 'inactive'
+    // automaticamente (cascade desconecta sessões WhatsApp vinculadas,
+    // igual ao fluxo manual de "Inativar"). Recorrências (DAILY/WEEKLY/
+    // MONTHLY) continuam ativas entre execuções.
+    if (broadcast.recurrence === 'ONCE') {
+      if (broadcast.status === 'completed') {
+        await this.autoDeactivateBot(
+          broadcast.botId,
+          broadcast.tenantId,
+          'completed',
+        );
+      }
+      return;
+    }
     if (broadcast.status !== 'completed') return;
 
     const next = new Date(broadcast.startAt);
@@ -244,6 +275,33 @@ export class BroadcastProcessor extends WorkerHost {
 
   private delay(ms: number) {
     return new Promise<void>((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * 🤖 S24 — Auto-inativa o bot dono do broadcast quando a campanha única
+   * (ONCE) conclui. Reaproveita BotsService.update({status:'inactive'}), que
+   * dispara cascadeDisconnectSessions (desconecta as sessões WhatsApp
+   * vinculadas ao bot, via WhatsappSessionsService.logout). A desconexão é
+   * fire-and-forget; se o bot já estiver inactive/testing, nada a fazer.
+   */
+  private async autoDeactivateBot(botId: string, tenantId: string, reason: string) {
+    try {
+      const bot = await this.prisma.bot.findFirst({
+        where: { id: botId, tenantId },
+        select: { id: true, status: true },
+      });
+      if (!bot || bot.status === 'inactive' || bot.status === 'testing') return;
+
+      await this.botsService.update(tenantId, botId, { status: 'inactive' });
+      this.logger.log(
+        `Bot ${botId} auto-inativado após campanha ${reason} (status: ${bot.status} → inactive)`,
+      );
+    } catch (err) {
+      // Nunca deve derrubar o worker — campanha já concluiu.
+      this.logger.error(
+        `autoDeactivateBot(${botId}) falhou: ${(err as Error).message}`,
+      );
+    }
   }
 
   private emitProgress(tenantId: string, b: {

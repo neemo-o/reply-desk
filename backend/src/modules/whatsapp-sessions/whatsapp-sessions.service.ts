@@ -212,6 +212,46 @@ export class WhatsappSessionsService {
     }
   }
 
+  /**
+   * 🔒 S24 — Gate de reconexão: valida que a sessão ainda tem um bot
+   * vinculado (SessionSettings.activeBotId) e que esse bot está ativo
+   * (status `active` ou `testing`). Caso contrário a reconexão é recusada
+   * com BadRequest — não faz sentido gerar QR para uma sessão cujo bot
+   * está inativo (o motor não vai responder mensagens).
+   *
+   * Diferente de `assertBotReadyForSession`, este aceita
+   * `activeBotId === null` (bot foi excluído com `onDelete: SetNull`),
+   * pois a sessão pode existir sem bot vinculado, situação em que a
+   * reconexão também não é permitida.
+   */
+  private async assertLinkedBotReady(
+    tenantId: string,
+    activeBotId: string | null | undefined,
+  ): Promise<void> {
+    if (!activeBotId) {
+      throw new BadRequestException(
+        'Esta sessão não tem um bot ativo vinculado. Selecione um bot ' +
+          'publicado nas configurações da sessão antes de reconectar.',
+      );
+    }
+    const bot = await this.prisma.bot.findFirst({
+      where: { id: activeBotId, tenantId },
+      select: { id: true, status: true },
+    });
+    if (!bot) {
+      throw new BadRequestException(
+        'O bot vinculado a esta sessão foi excluído. Selecione outro bot ' +
+          'antes de reconectar a sessão.',
+      );
+    }
+    if (bot.status !== 'active' && bot.status !== 'testing') {
+      throw new BadRequestException(
+        `O bot vinculado a esta sessão está inativo (status: ${bot.status}). ` +
+          `Ative o bot (ou coloque em testing) antes de reconectar a sessão.`,
+      );
+    }
+  }
+
   async updateSettings(
     tenantId: string,
     sessionId: string,
@@ -310,30 +350,7 @@ export class WhatsappSessionsService {
     });
     if (!session) throw new NotFoundException('Sessão não encontrada');
 
-    if (!session.settings?.activeBotId) {
-      throw new BadRequestException(
-        'Esta sessão não tem um bot ativo. Selecione um bot publicado nas configurações antes de gerar o QR Code.',
-      );
-    }
-
-    const bot = await this.prisma.bot.findFirst({
-      where: {
-        id: session.settings.activeBotId,
-        tenantId,
-      },
-      select: { id: true, status: true },
-    });
-    if (!bot) {
-      throw new BadRequestException(
-        'O bot vinculado a esta sessão foi excluído. Selecione outro bot antes de gerar o QR Code.',
-      );
-    }
-    if (bot.status !== 'active' && bot.status !== 'testing') {
-      throw new BadRequestException(
-        `O bot vinculado a esta sessão não está mais ativo nem em testing (status: ${bot.status}). ` +
-          `Ative o bot (ou coloque em testing) antes de gerar o QR Code.`,
-      );
-    }
+    await this.assertLinkedBotReady(tenantId, session.settings?.activeBotId);
 
     if (!session.webhookSecretHash) {
       throw new BadRequestException('Sessão sem webhook secret configurado (estado inválido)');
@@ -923,6 +940,14 @@ export class WhatsappSessionsService {
 
   async reconnect(tenantId: string, id: string): Promise<{ status: string }> {
     const session = await this.findOne(tenantId, id);
+
+    // 🔒 S24 — Não permite reconexão se o bot vinculado à sessão estiver
+    // inativo/deletado. Mesmo gate de startConnect: caso o bot tenha sido
+    // inativado (status draft|inactive) ou removido (activeBotId null por
+    // SetNull quando o bot é excluído), a reconexão é recusada ANTES de
+    // mutar o status da sessão — assim o usuário precisa (re)ativar o bot
+    // ou selecionar outro antes de gerar um novo QR.
+    await this.assertLinkedBotReady(tenantId, session.settings?.activeBotId);
 
     await this.updateStatus(session.id, 'connecting');
     await this.resetQrAttempts(session.id);

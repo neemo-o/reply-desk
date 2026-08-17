@@ -440,6 +440,19 @@ function SessionDetail({
     canManage && session.status === "qrcode_pending";
   const qrExpired = session.status === "qr_expired";
 
+  // 🤖 S24 — Verifica o status do bot vinculado à sessão para desabilitar a
+  // reconexão (e conectar) quando o bot está inativo ou foi excluído. O
+  // backend impede em /reconnect e /connect (ver assertLinkedBotReady), e
+  // aqui refletimos no botão para guiar o usuário antes do clique.
+  const { data: bots } = useBots();
+  const linkedBot = bots?.find((b) => b.id === session.settings?.activeBotId);
+  // Sem activeBotId OU bot excluído (onDelete:SetNull faz cair pra null) OU
+  // bot exists mas status não é active/testing → bloqueia reconexão.
+  const botBlocked =
+    canManage &&
+    (!linkedBot ||
+      (linkedBot.status !== "active" && linkedBot.status !== "testing"));
+
   // 📱 Hook unificado para o QR Code — substitui o loop manual antigo.
   // Controla: polling, countdown, backoff em erro, parada automática em
   // estados terminais (connected/qrExpired).
@@ -607,6 +620,25 @@ function SessionDetail({
           </div>
         )}
 
+        {/* 🤖 S24 — Bot vinculado inativo/excluído. Bloqueia reconexão porque
+            o motor não vai responder mensagens. Mostramos um aviso claro e
+            o botão "Reconectar" abaixo fica desabilitado. */}
+        {botBlocked && (
+          <div className="flex flex-col items-center gap-3 rounded-lg border border-red-300/50 bg-red-50/40 p-6 text-center dark:border-red-800/50 dark:bg-red-950/30">
+            <div className="flex items-center gap-2 text-sm font-medium text-red-700 dark:text-red-300">
+              <AlertTriangle className="h-4 w-4" />
+              Bot vinculado inativo
+            </div>
+            <p className="text-xs text-red-700/90 dark:text-red-300/90">
+              {!session.settings?.activeBotId
+                ? "Esta sessão não tem um bot vinculado. Selecione um bot publicado nas configurações da sessão antes de reconectar."
+                : !linkedBot
+                  ? "O bot vinculado a esta sessão foi excluído. Selecione outro bot nas configurações antes de reconectar."
+                  : `O bot "${linkedBot.name}" está inativo (status: ${linkedBot.status}). Ative o bot (ou coloque em testing) antes de reconectar a sessão.`}
+            </p>
+          </div>
+        )}
+
         {/* 🔒 S25 — Limite de tentativas de QR atingido. Mostramos uma
             mensagem clara e habilitamos o botão "Reconectar" (que já existe
             no rodapé — só precisamos deixar habilitado aqui). A UI também
@@ -675,15 +707,22 @@ function SessionDetail({
             //  - connected: já está conectado, nada a reconectar.
             disabled={
               reconnect.isPending ||
+              botBlocked ||
               (session.status !== "qr_expired" &&
                 session.status !== "disconnected")
             }
             title={
-              session.status === "qr_expired"
-                ? "Reconectar — zera o limite e gera um QR Code novo"
-                : session.status === "disconnected"
-                  ? "Reconectar — recria a instância na Evolution e gera um QR Code novo"
-                  : "Reconectar disponível apenas em QR expirado ou sessão desconectada"
+              botBlocked
+                ? !session.settings?.activeBotId
+                  ? "Reconectar bloqueado: nenhum bot vinculado a esta sessão"
+                  : !linkedBot
+                    ? "Reconectar bloqueado: o bot vinculado foi excluído"
+                    : `Reconectar bloqueado: o bot "${linkedBot.name}" está inativo (${linkedBot.status})`
+                : session.status === "qr_expired"
+                  ? "Reconectar — zera o limite e gera um QR Code novo"
+                  : session.status === "disconnected"
+                    ? "Reconectar — recria a instância na Evolution e gera um QR Code novo"
+                    : "Reconectar disponível apenas em QR expirado ou sessão desconectada"
             }
           >
             <RefreshCw className={cn("h-4 w-4", reconnect.isPending && "animate-spin")} />
